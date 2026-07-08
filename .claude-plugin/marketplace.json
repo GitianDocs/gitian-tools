@@ -1,0 +1,18 @@
+{
+  "name": "gitian-tools",
+  "owner": {
+    "name": "GitianDocs"
+  },
+  "plugins": [
+    {
+      "name": "gitian-kb",
+      "source": "./plugins/gitian-kb",
+      "description": "Publish distilled knowledge (memories, docs, journal entries) to your gitian Knowledge Base via MCP, with the discipline for when and how."
+    },
+    {
+      "name": "gitian-docs",
+      "source": "./plugins/gitian-docs",
+      "description": "Keep @gitian annotations and paired docs/ files in sync as code changes, with a PostToolUse nudge so the reminder shows up at the moment it matters."
+    }
+  ]
+}

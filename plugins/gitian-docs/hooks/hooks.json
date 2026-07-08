@@ -1,0 +1,17 @@
+{
+  "description": "gitian-docs: PostToolUse nudge to keep @gitian annotations and paired docs/ files in sync after code edits.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/gitian-docs-nudge.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

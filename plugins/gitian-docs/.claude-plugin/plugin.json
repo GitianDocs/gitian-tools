@@ -1,0 +1,17 @@
+{
+  "name": "gitian-docs",
+  "description": "gitian documentation discipline: keep @gitian annotations and paired docs/ files in sync as code changes, with a PostToolUse nudge so the reminder shows up at the moment it matters.",
+  "version": "0.3.0",
+  "author": {
+    "name": "GitianDocs"
+  },
+  "homepage": "https://gitian.dev",
+  "repository": "https://github.com/GitianDocs/gitian-tools",
+  "license": "MIT",
+  "keywords": [
+    "gitian",
+    "documentation",
+    "annotations",
+    "hooks"
+  ]
+}
