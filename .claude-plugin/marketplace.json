@@ -13,6 +13,11 @@
       "name": "gitian-docs",
       "source": "./plugins/gitian-docs",
       "description": "Keep @gitian annotations and paired docs/ files in sync as code changes, with a PostToolUse nudge so the reminder shows up at the moment it matters."
+    },
+    {
+      "name": "gitian-spec",
+      "source": "./plugins/gitian-spec",
+      "description": "Author long-form work docs — specs, plans, designs, brainstorms, handoffs, session notes — as gitian KB docs: scan-before-write, ground-truth manifests, implementation recaps. Requires gitian-kb (the MCP connection)."
     }
   ]
 }

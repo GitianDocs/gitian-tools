@@ -1,0 +1,17 @@
+{
+  "description": "gitian-spec: SessionStart nudge routing long-form doc requests to KB publishing; warns when the required gitian-kb companion (the MCP connection) is missing.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/spec-context.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

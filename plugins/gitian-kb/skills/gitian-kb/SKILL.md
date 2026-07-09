@@ -52,6 +52,16 @@ Worked example: fixing a flaky CI failure. `search "flaky auth"` turns up nothin
 | Context compacted | `publish_doc` | `type: handoff` — right after a compaction, distill the summary plus what you still hold into a handoff a fresh agent could resume from (the session hook reminds you); before a *manual* `/compact`, run `/gitian-kb:handoff` to capture state pre-squash |
 | Feature landed | `publish_doc` (`type: recap`) **and** flip the feature doc's `status` to a terminal value | do both — a recap without the status flip leaves the KB stale |
 
+## Companion: gitian-spec
+
+When the gitian-spec plugin is installed, long-form *authoring* — being asked to write a spec,
+plan, design, brainstorm, handoff, or session note, and documenting what a landed feature shipped
+— follows that skill's discipline (scan-before-write, manifest field derivation, commits-list
+conventions, the implementation-recap checklist and its in-body-vs-separate-doc placement rule).
+This skill keeps orientation (RAG at work-start), completion-point distillation, the journal, and
+memories. Same tools, same `gitian-kb://format/*` authority either way — gitian-spec ships no MCP
+config of its own and rides this plugin's single connection.
+
 ## Orient first
 
 Read the matching resource before the *first* use of each publish tool in a session — don't guess the shape:
