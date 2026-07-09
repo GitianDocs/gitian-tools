@@ -64,6 +64,7 @@ context="gitian-kb session context:"
 context="${context}\n- date (UTC): ${today}"
 context="${context}\n\nRAG discipline: before substantive work, \`search\` the gitian KB for the task topic and \`neighbors\` the best hit. Before finishing, publish per the gitian-kb skill -- populate frontmatter using the repo/date above, and never omit \`summary\`."
 context="${context}\nSchema authority: live \`gitian-kb://format/*\` resources are authoritative over cached tool schemas. On \`validation_failed\` naming a field the cached schema doesn't list, trust the server and retry."
+context="${context}\nKB bodies are Obsidian-flavored intent docs (\`[[slug]]\` wikilinks, snippets where they clarify). Reference existing \`@gitian\` anchors only when the repo is instrumented -- NEVER inject gitian markup into a codebase that isn't already using the gitian docs system."
 
 if [ "$start_source" = "compact" ]; then
   context="${context}\n\nA compaction just squashed this conversation. Before continuing the task, distill the pre-compact work into the KB as a handoff (per the gitian-kb skill): publish a \`type: handoff\` doc -- or update the thread's governing doc -- capturing current state, decisions in flight, and next steps, written so a fresh agent could resume from it alone."

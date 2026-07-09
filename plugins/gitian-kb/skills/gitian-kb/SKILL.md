@@ -91,6 +91,10 @@ field, and retry.
 - `body` is distilled content — decisions made, the rationale behind them, alternatives considered and rejected — not a transcript of the conversation or a chronological log of messages. Write what a future reader needs to understand and trust the outcome.
 - Set `repo` to the working repository as `owner/name` (derive it from `git remote get-url origin`); explicit `null` when the work isn't repo-bound or there's no remote — never guess. The repo doesn't need to be connected to gitian; identity is late-binding.
 
+## Writing bodies
+
+Bodies are Obsidian-flavored intent documentation — why the thing is the way it is, not a transcript. Link related KB items inline with `[[slug]]` wikilinks (they resolve in the UI and strengthen the likeness graph), structure with headings, and include short code snippets where they say it better than prose. Reference code where the knowledge lives: in a repo already instrumented with gitian docs (a `.gitian/` config directory, `@gitian` annotations, paired `docs/` files), point at those anchors — an annotation id, a doc path — instead of duplicating their content; in any other repo, reference files and symbols plainly. **Never add `@gitian` annotations or any gitian markup to a codebase that isn't already using the gitian docs system** — publishing to the KB never licenses editing code comments; in-code instrumentation is opt-in via the gitian-docs plugin only.
+
 ## Terminal-state discipline
 
 Before telling the user work is done, abandoned, or paused, re-publish the governing doc with the updated `status` (and `impl_status`) — the platform stamps `updated_at` for you, so this is the only step you owe it. A landed feature gets **both** the status flip and a `recap` doc; shipping one without the other leaves the KB half-updated and misleads whoever reads it next.
