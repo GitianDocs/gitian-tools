@@ -1,8 +1,8 @@
 #!/bin/sh
 # session-context.sh -- SessionStart hook for the gitian-kb plugin.
 #
-# Fires on every SessionStart (startup and resume alike — no marker-file dedupe; a repeat on
-# resume is harmless). Emits a short hookSpecificOutput.additionalContext block:
+# Fires on every SessionStart (startup, resume, clear, compact — no marker-file dedupe; a repeat
+# on resume is harmless). Emits a short hookSpecificOutput.additionalContext block:
 #   - derived context: repo (owner/name, from `git remote get-url origin`), current branch,
 #     today's date (UTC) -- lines are omitted when the underlying value isn't available
 #     (no remote, detached HEAD, not a git repo at all)
@@ -10,9 +10,19 @@
 #     per the gitian-kb skill, always populate frontmatter (never omit `summary`)
 #   - the schema-authority reminder: live gitian-kb://format/* resources beat cached tool
 #     schemas -- trust validation_failed over a stale cached schema
+#   - on source=compact only: a handoff directive -- distill the pre-compact work into a
+#     `type: handoff` doc before continuing (PreCompact hooks can't reach the model, so the
+#     post-compaction SessionStart is the earliest hookable moment; the compaction summary is
+#     generated from the full pre-squash context, so distilling it now loses the least)
 #
 # Must be fast and silent-safe: no network, plain git plumbing only, always exits 0.
 set -u
+
+# Hook input JSON arrives on stdin; `source` says which SessionStart this is
+# (startup | resume | clear | compact).
+hook_input="$(cat 2>/dev/null || true)"
+start_source="$(printf '%s' "$hook_input" | grep -o '"source" *: *"[^"]*"' | head -n 1 |
+  sed 's/.*"source" *: *"\([^"]*\)".*/\1/')"
 
 project_dir="${CLAUDE_PROJECT_DIR:-.}"
 
@@ -54,6 +64,10 @@ context="gitian-kb session context:"
 context="${context}\n- date (UTC): ${today}"
 context="${context}\n\nRAG discipline: before substantive work, \`search\` the gitian KB for the task topic and \`neighbors\` the best hit. Before finishing, publish per the gitian-kb skill -- populate frontmatter using the repo/date above, and never omit \`summary\`."
 context="${context}\nSchema authority: live \`gitian-kb://format/*\` resources are authoritative over cached tool schemas. On \`validation_failed\` naming a field the cached schema doesn't list, trust the server and retry."
+
+if [ "$start_source" = "compact" ]; then
+  context="${context}\n\nA compaction just squashed this conversation. Before continuing the task, distill the pre-compact work into the KB as a handoff (per the gitian-kb skill): publish a \`type: handoff\` doc -- or update the thread's governing doc -- capturing current state, decisions in flight, and next steps, written so a fresh agent could resume from it alone."
+fi
 
 printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$context"
 exit 0

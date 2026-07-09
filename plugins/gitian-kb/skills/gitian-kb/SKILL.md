@@ -46,8 +46,10 @@ Worked example: fixing a flaky CI failure. `search "flaky auth"` turns up nothin
 | Design settled | `publish_doc` | `type: spec` or `type: design` |
 | Plan written | `publish_doc` | `type: plan` |
 | Durable fact learned | `publish_memory` | a preference, gotcha, or project fact worth recalling next session |
-| Session/day worth recording | `publish_entry` | only past the standup threshold, below |
+| Meaningful event (pivots included) | `publish_entry` | append to today's running entry as it happens — see the running-record section below |
 | Handing off mid-stream | `publish_doc` | `type: handoff` |
+| Conversation pivots off a thread | `publish_doc`/`publish_memory` + `publish_entry` | a pivot ends the old thread as surely as finishing it — publish or update its governing item *before* engaging the new topic, and fold the pivot into today's journal entry |
+| Context compacted | `publish_doc` | `type: handoff` — right after a compaction, distill the summary plus what you still hold into a handoff a fresh agent could resume from (the session hook reminds you); before a *manual* `/compact`, run `/gitian-kb:handoff` to capture state pre-squash |
 | Feature landed | `publish_doc` (`type: recap`) **and** flip the feature doc's `status` to a terminal value | do both — a recap without the status flip leaves the KB stale |
 
 ## Orient first
@@ -57,7 +59,7 @@ Read the matching resource before the *first* use of each publish tool in a sess
 - `gitian-kb://format/overview` — the three primitives, upsert/versioning rules, null-not-omitted
 - `gitian-kb://format/memory` — memory fields and slug conventions
 - `gitian-kb://format/doc` — the full doc manifest, enums, distillation and recap guidance
-- `gitian-kb://format/entry` — the journal format and the standup threshold
+- `gitian-kb://format/entry` — the journal format and the running-record discipline
 
 `search` before inventing a new slug. The same topic may already have an item under a name you didn't guess — re-publish the *same* slug to update it (appends a revision); only mint a new slug for a genuinely new topic.
 
@@ -95,12 +97,14 @@ Before telling the user work is done, abandoned, or paused, re-publish the gover
 
 Worked example: a feature branch merges. Re-publish the design/plan doc's slug — the full manifest again, with `status: landed`, `impl_status: done`, `commits: [<sha>]` updated — then `publish_doc` a new `type: recap` covering what shipped, the key decisions, gotchas discovered, and any deferred follow-ups.
 
-## The standup threshold (entries)
+## The journal is a running record (entries)
 
-Only call `publish_entry` when the day or session would be worth mentioning at standup — a landed feature, a real blocker, a notable decision, a day of genuine investigation. Routine, uneventful work doesn't clear the bar; fold it into an existing doc or memory instead of creating a throwaway entry. One entry exists per scope per day — re-publishing the same `date` + `scope` appends a revision to it rather than creating a duplicate.
+The day's entry is a running record of meaningful events, appended to as they happen — not a day's-end summary gated behind a whole-day bar. When something meaningful happens mid-session — a feature lands, a real blocker appears, a decision settles, a finding surfaces, or the conversation pivots off a thread — re-publish today's entry with it folded in. One entry exists per scope per day; re-publishing the same `date` + `scope` appends a revision, so appending is cheap and safe.
+
+The bar for "meaningful" is what a teammate would care to hear at standup — a pivot, a diagnosis, a settled design all clear it; routine mechanical work (a rename, a re-run, a dependency bump) does not. The journal records the day a colleague would want to catch up on, not a command log.
 
 ## Never auto-publish
 
-Publish at natural completion points or on explicit user intent, full stop. Never publish silently, never in bulk, and never mid-task on a timer — the standup threshold and the discipline above only hold if every publish is a deliberate call, not a background habit.
+Publish at natural completion points or on explicit user intent, full stop. Never publish silently, never in bulk, and never mid-task on a timer — the meaningful-event bar and the discipline above only hold if every publish is a deliberate call, not a background habit.
 
-Natural completion points: a design conversation converges, a plan is finished and about to be handed to implementation, a feature merges, a work session wraps up worth an entry. If none of those has happened, don't publish yet — keep working and revisit the trigger table later.
+Natural completion points: a design conversation converges, a plan is finished and about to be handed to implementation, a feature merges, a work session wraps up worth an entry, the conversation pivots off a thread, or a compaction has just squashed (or a manual `/compact` is about to squash) undistilled context. If none of those has happened, don't publish yet — keep working and revisit the trigger table later.
