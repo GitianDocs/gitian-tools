@@ -30,7 +30,7 @@ authoring discipline; the companion gitian-kb plugin owns the connection and the
 
 gitian-kb is a **required companion**: gitian-spec deliberately ships no MCP config of its own,
 so the `gitian` tools this skill authors through (`search`, `neighbors`, `get`, `history`,
-`publish_doc`, `publish_entry`) come from gitian-kb's single connection — if the tools are
+`file_intents`, `publish_doc`, `publish_entry`) come from gitian-kb's single connection — if the tools are
 missing, install `gitian-kb@gitian-tools`. gitian-kb's publishing rules apply here unchanged and
 by reference: full-manifest publishes (explicit `null`/`[]`, keys never omitted), schema
 authority (live `gitian-kb://format/*` resources beat cached tool schemas), `warnings` are
@@ -90,6 +90,10 @@ The rules the schema can't express:
   agent-facing TODO list. `blockers` = anything preventing forward motion; `[]` if none.
 - Dates from the system clock, never memory; convert relative dates ("Tuesday") to absolute
   YYYY-MM-DD.
+- `files` — the repo-relative paths the work will touch, from the plan's own Files sections or
+  `git diff --name-only`, never memory; a trailing `/` claims a subtree; `[]` only when the doc
+  isn't code-shaped. Before publishing a plan, check `file_intents` for the repo — on overlap,
+  `get` the contending doc and cross-link it in `related`.
 
 ## Updating an existing doc
 

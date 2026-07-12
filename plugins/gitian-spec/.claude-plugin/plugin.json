@@ -1,7 +1,7 @@
 {
   "name": "gitian-spec",
   "description": "gitian long-form doc authoring: write specs, plans, designs, brainstorms, handoffs, and session notes as gitian KB docs — scan before writing, ground-truth manifests, terminal-state hygiene, implementation recaps. Companion to gitian-kb.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "GitianDocs"
   },
