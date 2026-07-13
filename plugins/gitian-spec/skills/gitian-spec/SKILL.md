@@ -93,7 +93,8 @@ The rules the schema can't express:
 - `files` — the repo-relative paths the work will touch, from the plan's own Files sections or
   `git diff --name-only`, never memory; a trailing `/` claims a subtree; `[]` only when the doc
   isn't code-shaped. Before publishing a plan, check `file_intents` for the repo — on overlap,
-  `get` the contending doc and cross-link it in `related`.
+  `get` the contending doc (pass its `owner` login when the hit carries one — a teammate's plan
+  on a shared org repo, not your own) and cross-link it in `related`.
 
 ## Updating an existing doc
 
