@@ -28,14 +28,14 @@ A multi-day effort with status and next steps is a doc even if the write-up is o
 
 ## The loop
 
-1. **Orient** — before any substantive work, not just before writing: `search` (or `list`) the KB for the topic, then call `neighbors` on the best hit. This is RAG at work-start, not a publish-time formality — the item you're about to create may already exist under a different slug you haven't thought of, and the likeness graph surfaces adjacent decisions a keyword search alone would miss. Working in a repo? `file_intents` the repo too — it lists which in-flight docs claim which paths; on overlap with what you're about to touch, `get` the contending doc before proceeding. `include_landed: true` widens that same call into "who has reworked this area before" — deactivated (landed/abandoned) plans included, not just what's in flight.
-2. **Thread** — read the matching `gitian-kb://format/<primitive>` resource, then adopt what's already decided: don't re-litigate a settled design, cross-link into it via `related` (slugs) instead of duplicating it. Before heavily editing a doc you didn't write, pull it with `get` and skim `history` to see how it evolved. Call `neighbors` on it too — the likeness graph surfaces adjacent decisions you wouldn't have thought to `search` for.
-3. **Publish** — call the right tool (`publish_memory` / `publish_doc` / `publish_entry`) with the full manifest, not a partial one.
+1. **Orient** — before any substantive work, not just before writing: read `gitian-kb://vocab` first (the live topic + category vocabulary — slug, description, degree for topics; slug, name, routing prompt for categories), then `search` (or `list`) the KB for the topic, then call `neighbors` on the best hit. This is RAG at work-start, not a publish-time formality — the item you're about to create may already exist under a different slug you haven't thought of, the vocab may already have a topic naming what you're about to link, and `neighbors`' topic-derived neighborhood surfaces adjacent decisions a keyword search alone would miss. Working in a repo? `file_intents` the repo too — it lists which in-flight docs claim which paths; on overlap with what you're about to touch, `get` the contending doc before proceeding. `include_landed: true` widens that same call into "who has reworked this area before" — deactivated (landed/abandoned) plans included, not just what's in flight.
+2. **Thread** — read the matching `gitian-kb://format/<primitive>` resource, then adopt what's already decided: don't re-litigate a settled design, cross-link into it via `related` (slugs) instead of duplicating it. Before heavily editing a doc you didn't write, pull it with `get` and skim `history` to see how it evolved. Call `neighbors` on it too — its topic-derived `why` surfaces adjacent decisions you wouldn't have thought to `search` for.
+3. **Publish** — call the right tool (`publish_memory` / `publish_doc` / `publish_entry`) with the full manifest, not a partial one, `topics`/`mentions`/`category` included (see **Topics & categories** below).
 4. **Confirm** — every `publish_*` call returns a `url`; surface it to the user: "published → `<url>`". (`retract_item` returns `{slug, rev, tombstoned}` — no url.)
 
 Retract obsolete items with `retract_item` rather than trying to delete their content — it appends a tombstone revision. History survives, and re-publishing the same slug un-deletes it.
 
-A `publish_*` result may also carry `suggested_related`: up to 3 likeness neighbors the server noticed but you didn't already list in `related`. Review it on every publish — when a suggestion is genuinely related, re-publish the same slug with it added to `related` rather than ignoring it; ground truth improves the likeness graph for everyone who calls `neighbors` after you.
+A `publish_*` result may also carry `suggested_topics`: up to 5 existing topics the server noticed read close to what you just wrote but that you didn't already link in `topics`/`mentions`. Review it on every publish — when a suggestion is genuinely on-topic, re-publish the same slug with it added rather than ignoring it; precise linking is what keeps `neighbors` useful for everyone who calls it after you.
 
 Worked example: fixing a flaky CI failure. `search "flaky auth"` turns up nothing; read `gitian-kb://format/memory`; fix the bug; `publish_memory` with slug `ci-flaky-oauth-token`, `type: reference`; tell the user "published → `<url>`" from the response.
 
@@ -64,14 +64,27 @@ config of its own and rides this plugin's single connection.
 
 ## Orient first
 
-Read the matching resource before the *first* use of each publish tool in a session — don't guess the shape:
+Read `gitian-kb://vocab` (see **Topics & categories** below) plus the matching format resource before the *first* use of each publish tool in a session — don't guess the shape:
 
+- `gitian-kb://vocab` — the live topic vocabulary and category routing prompts, as JSON
 - `gitian-kb://format/overview` — the three primitives, upsert/versioning rules, null-not-omitted
 - `gitian-kb://format/memory` — memory fields and slug conventions
 - `gitian-kb://format/doc` — the full doc manifest, enums, distillation and recap guidance
 - `gitian-kb://format/entry` — the journal format and the running-record discipline
 
-`search` before inventing a new slug. The same topic may already have an item under a name you didn't guess — re-publish the *same* slug to update it (appends a revision); only mint a new slug for a genuinely new topic.
+`search` before inventing a new slug. The same subject may already have an item under a name you didn't guess — re-publish the *same* slug to update it (appends a revision); only mint a new slug for a genuinely new subject.
+
+## Topics & categories
+
+Doc-doc relatedness is entirely topic-derived now — there's no other correlation signal besides an explicit `related`/wikilink. Link deliberately, every publish:
+
+- **`topics`** (primary tier, "this item is *about* X") — advise 1-3 per item. **`mentions`** (secondary tier, "this item *touches* X" without being about it) — as many as apply. A slug in both collapses to primary.
+- **Prefer existing topics.** `gitian-kb://vocab` lists every live topic with its description and degree — link to what's already there before considering a new one. A vague, catch-all topic (or one linked to nearly everything) contributes almost nothing to relatedness by construction (informativeness falls as membership grows), so precision beats coverage.
+- **Mint deliberately, not by accident.** Naming a topic slug in `topics`/`mentions` that isn't in the vocab is never rejected — the link is stored but inert (excluded from relatedness) until the topic exists, and the publish response carries an advisory `unknown_topics` warning. Don't treat that warning as "fix it later, whatever" — either it names a genuine gap (call `publish_topic` with a slug + a real description) or it's a typo of an existing slug (fix the link). Never let an item accumulate links to topics nobody minted.
+- **`category`** — at most one, `null` if none. Pick from `gitian-kb://vocab`'s categories using their routing prompts; an unknown category slug gets the same late-binding treatment (`unknown_category` warning). Categories are authored in the `/kb` UI, not minted over MCP.
+- **Update-over-create bias.** Before minting a brand-new `doc` slug, check whether an existing *active* doc already owns the same primary topics — `list({topic: "<slug>"})` or the `topic` tool's member list — and update that doc instead of publishing a near-duplicate. The server backstops this with an advisory `consider_update` warning on a rev-1 doc mint whose primary topics heavily overlap an existing doc's, but don't rely on the backstop catching everything; check first.
+- **`neighbors`** on a slug returns each hit's `why.topics` (the shared topics driving the score, richest first) and `why.explicit` (non-null when an explicit link floors the weight at 1.0) — use it to understand *why* something surfaced, not just *that* it did.
+- **`topic`** (hub view) and **`publish_topic`**/**`retract_topic`** (mint/update/tombstone) round out the toolset for working with the vocabulary directly — see their tool descriptions for the exact shapes.
 
 ## Schema authority
 
@@ -90,7 +103,7 @@ field, and retry.
 - Slugs share one namespace per owner across all three primitives — a `memory` and a `doc` can't reuse the same slug. Pick something specific enough not to collide, and `search` first so you don't collide silently.
 - An identical re-publish returns `unchanged: true`. That is success, not an error — don't retry it or treat it as a failure.
 - **Populate frontmatter — don't default to null.** `project`, `repo`, and `tags` must be filled whenever they're derivable, not left null out of habit. The SessionStart hook context (repo, branch, date) gives you what you need for `repo` at the top of the session; set `project` from the obvious repo/workspace name. Explicit `null` is only for work that's genuinely not project- or repo-bound — never a shortcut. Always include `summary`, especially on memories, where it's the only preview a list view shows.
-- `warnings` on a successful publish are advice to act on, not blockers. Seven codes:
+- `warnings` on a successful publish are advice to act on, not blockers. Twelve codes:
   - `no_tags` — no tags supplied; add 1-3 to aid retrieval
   - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
   - `no_repo` — `repo` is null; derive it from `git remote get-url origin` (the SessionStart hook already surfaces this) or confirm the work isn't repo-bound
@@ -98,6 +111,11 @@ field, and retry.
   - `impl_done_status_open` — `impl_status: done` but `status` is still draft/designing/in-progress/blocked; reconcile before closing out
   - `terminal_with_next_steps` — `status` is terminal but `next_steps` is non-empty; confirm they still apply
   - `plan_without_files` — an active plan with a `repo` but empty `files`; declare the paths the plan will touch (trailing `/` = subtree) so parallel agents can detect contention
+  - `unknown_topics` — a `topics`/`mentions` slug isn't a live topic (unminted or tombstoned); the link is stored but inert until you `publish_topic` it or fix the slug
+  - `unknown_category` — `category` isn't a live category slug; stored but inert until it's minted (`/kb` UI) or fixed
+  - `links_update_failed` — the topic/item-link index itself failed to write (distinct from an unknown slug); re-publish (even unchanged) to repair
+  - `intents_update_failed` — the file-intents index failed to write; re-publish (even unchanged) to repair
+  - `consider_update` — a rev-1 doc mint shares primary topics with an existing active doc; check whether you should be updating that doc instead — see **Topics & categories**
 - On `validation_failed`, fix every listed `issue` and retry — the error's `format_resource` field names the exact guide to re-read.
 - `contention` on a successful `publish_doc` means another active doc declares overlapping `files` — read it (`get`), coordinate or narrow scope, and cross-link it in `related`. If the hit carries a non-null `owner` (a teammate's plan on a shared org repo, not your own), pass that login as `get`'s `owner` param — a bare `get slug` looks up *your own* item at that slug (or `not_found`), not theirs. `file_intents` hits carry the same `owner` field for the same reason.
 - **Org-wide visibility** is read-time and repo-scoped: when a repo belongs to a gitian org you're seated + entitled in, `file_intents`/`contention` widen from your own rows to every currently-seated member's rows on that repo, and `get` with `owner` can read a teammate's doc under the grant its frontmatter declares (`repo` + `files`) — nothing here is a separate opt-in or a different tool.
@@ -106,7 +124,7 @@ field, and retry.
 
 ## Writing bodies
 
-Bodies are Obsidian-flavored intent documentation — why the thing is the way it is, not a transcript. Link related KB items inline with `[[slug]]` wikilinks (they resolve in the UI and strengthen the likeness graph), structure with headings, and include short code snippets where they say it better than prose. Reference code where the knowledge lives: in a repo already instrumented with gitian docs (a `.gitian/` config directory, `@gitian` annotations, paired `docs/` files), point at those anchors — an annotation id, a doc path — instead of duplicating their content; in any other repo, reference files and symbols plainly. **Never add `@gitian` annotations or any gitian markup to a codebase that isn't already using the gitian docs system** — publishing to the KB never licenses editing code comments; in-code instrumentation is opt-in via the gitian-docs plugin only.
+Bodies are Obsidian-flavored intent documentation — why the thing is the way it is, not a transcript. Link related KB items inline with `[[slug]]` wikilinks (they resolve in the UI and add a direct, always-1.0 relatedness link between the two items — stronger than any topic overlap), structure with headings, and include short code snippets where they say it better than prose. Reference code where the knowledge lives: in a repo already instrumented with gitian docs (a `.gitian/` config directory, `@gitian` annotations, paired `docs/` files), point at those anchors — an annotation id, a doc path — instead of duplicating their content; in any other repo, reference files and symbols plainly. **Never add `@gitian` annotations or any gitian markup to a codebase that isn't already using the gitian docs system** — publishing to the KB never licenses editing code comments; in-code instrumentation is opt-in via the gitian-docs plugin only.
 
 ## Terminal-state discipline
 

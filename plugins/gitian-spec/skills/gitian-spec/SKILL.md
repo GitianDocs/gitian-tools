@@ -44,7 +44,7 @@ first publish of a session.
 Never draft into a vacuum. Before writing anything:
 
 1. `search` the KB for the topic (plus `list` when the corpus is small), then `neighbors` on the
-   best hit — the likeness graph surfaces adjacent decisions keyword search misses.
+   best hit — its topic-derived neighborhood surfaces adjacent decisions keyword search misses.
 2. Read the plausibly-related artifacts with `get` — frontmatter plus opening section, not
    filename-guessing. Cap the scan at ~5 artifacts; when more match, pick the 2-3 most relevant.
 3. Surface findings to the user in one short paragraph *before* drafting: "I found N related
@@ -95,6 +95,15 @@ The rules the schema can't express:
   isn't code-shaped. Before publishing a plan, check `file_intents` for the repo — on overlap,
   `get` the contending doc (pass its `owner` login when the hit carries one — a teammate's plan
   on a shared org repo, not your own) and cross-link it in `related`.
+- `topics`/`mentions` — derive from the work's actual subject matter (what the doc is *about*
+  vs. what it merely *touches*), never invented and never padded to hit a count. Read
+  `gitian-kb://vocab` first and link an existing topic over minting a near-duplicate; 1-3
+  primaries is the advised ceiling, not a target to fill. Before minting a brand-new doc slug,
+  check whether an existing active doc already owns the same primary topics (`list({topic:
+  "<slug>"})` or the `topic` tool) and update that doc instead — the update-over-create bias
+  gitian-kb's skill teaches, backstopped server-side by the `consider_update` warning.
+- `category` — at most one, chosen from `gitian-kb://vocab`'s categories via the user's routing
+  prompts, never guessed from the doc type; `null` when nothing in the vocabulary fits.
 
 ## Updating an existing doc
 

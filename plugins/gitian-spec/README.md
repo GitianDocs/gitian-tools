@@ -27,7 +27,9 @@ detects the gap and says so.
   (search + neighbors, adopt settled decisions, cross-link, flag stale manifests), choose the
   right shape (doc vs entry, type mapping for brainstorms and progress updates), derive every
   manifest field from ground truth (project from cwd, branch/worktree from git, dates from the
-  clock), terminal-state hygiene, commits-list conventions, and the 14-point implementation-recap
+  clock, `topics`/`mentions` from the work's actual subject matter via `gitian-kb://vocab`,
+  `category` from the user's routing prompts — update-over-create bias before minting a new doc),
+  terminal-state hygiene, commits-list conventions, and the 14-point implementation-recap
   checklist.
 - **Hook** (`hooks/spec-context.sh`, wired via `hooks/hooks.json`): fires on `SessionStart`. One
   routing line (long-form docs are KB deliverables); it adds nothing gitian-kb's session hook

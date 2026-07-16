@@ -62,7 +62,7 @@ context="gitian-kb session context:"
 [ -n "$repo" ] && context="${context}\n- repo: ${repo}"
 [ -n "$branch" ] && context="${context}\n- branch: ${branch}"
 context="${context}\n- date (UTC): ${today}"
-context="${context}\n\nRAG discipline: before substantive work, \`search\` the gitian KB for the task topic and \`neighbors\` the best hit -- when a repo is listed above, \`file_intents\` it to see which in-flight plans claim which paths. Before finishing, publish per the gitian-kb skill -- populate frontmatter using the repo/date above, and never omit \`summary\`."
+context="${context}\n\nRAG discipline: before substantive work, \`search\` the gitian KB for the task topic and \`neighbors\` the best hit -- when a repo is listed above, \`file_intents\` it to see which in-flight plans claim which paths. Before finishing, publish per the gitian-kb skill -- read \`gitian-kb://vocab\` before linking/minting topics, populate frontmatter (including \`topics\`/\`mentions\`/\`category\`) using the repo/date above, and never omit \`summary\`."
 context="${context}\nSchema authority: live \`gitian-kb://format/*\` resources are authoritative over cached tool schemas. On \`validation_failed\` naming a field the cached schema doesn't list, trust the server and retry."
 context="${context}\nKB bodies are Obsidian-flavored intent docs (\`[[slug]]\` wikilinks, snippets where they clarify). Reference existing \`@gitian\` anchors only when the repo is instrumented -- NEVER inject gitian markup into a codebase that isn't already using the gitian docs system."
 
