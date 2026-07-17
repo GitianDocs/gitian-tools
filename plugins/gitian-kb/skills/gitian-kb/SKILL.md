@@ -30,7 +30,7 @@ A multi-day effort with status and next steps is a doc even if the write-up is o
 
 1. **Orient** — before any substantive work, not just before writing: read `gitian-kb://vocab` first (the live topic + category vocabulary — slug, description, degree for topics; slug, name, routing prompt for categories), then `search` (or `list`) the KB for the topic, then call `neighbors` on the best hit. This is RAG at work-start, not a publish-time formality — the item you're about to create may already exist under a different slug you haven't thought of, the vocab may already have a topic naming what you're about to link, and `neighbors`' topic-derived neighborhood surfaces adjacent decisions a keyword search alone would miss. Working in a repo? `file_intents` the repo too — it lists which in-flight docs claim which paths; on overlap with what you're about to touch, `get` the contending doc before proceeding. `include_landed: true` widens that same call into "who has reworked this area before" — deactivated (landed/abandoned) plans included, not just what's in flight.
 2. **Thread** — read the matching `gitian-kb://format/<primitive>` resource, then adopt what's already decided: don't re-litigate a settled design, cross-link into it via `related` (slugs) instead of duplicating it. Before heavily editing a doc you didn't write, pull it with `get` and skim `history` to see how it evolved. Call `neighbors` on it too — its topic-derived `why` surfaces adjacent decisions you wouldn't have thought to `search` for.
-3. **Publish** — call the right tool (`publish_memory` / `publish_doc` / `publish_entry`) with the full manifest, not a partial one, `topics`/`mentions`/`category` included (see **Topics & categories** below).
+3. **Publish** — call the right tool (`publish_memory` / `publish_doc` / `publish_entry`) with the full manifest, not a partial one, `topics`/`mentions`/`category` included (see **Topics & categories** below). Updating today's journal entry is the one exception: use `append_entry` (see **The journal is a running record** below) — a small, targeted call, not a full-manifest publish.
 4. **Confirm** — every `publish_*` call returns a `url`; surface it to the user: "published → `<url>`". (`retract_item` returns `{slug, rev, tombstoned}` — no url.)
 
 Retract obsolete items with `retract_item` rather than trying to delete their content — it appends a tombstone revision. History survives, and re-publishing the same slug un-deletes it.
@@ -46,9 +46,9 @@ Worked example: fixing a flaky CI failure. `search "flaky auth"` turns up nothin
 | Design settled | `publish_doc` | `type: spec` or `type: design` |
 | Plan written | `publish_doc` | `type: plan` |
 | Durable fact learned | `publish_memory` | a preference, gotcha, or project fact worth recalling next session |
-| Meaningful event (pivots included) | `publish_entry` | append to today's running entry as it happens — see the running-record section below |
+| Meaningful event (pivots included) | `append_entry` | append to today's running entry as it happens — see the running-record section below; `publish_entry` remains for a full rewrite |
 | Handing off mid-stream | `publish_doc` | `type: handoff` |
-| Conversation pivots off a thread | `publish_doc`/`publish_memory` + `publish_entry` | a pivot ends the old thread as surely as finishing it — publish or update its governing item *before* engaging the new topic, and fold the pivot into today's journal entry |
+| Conversation pivots off a thread | `publish_doc`/`publish_memory` + `append_entry` | a pivot ends the old thread as surely as finishing it — publish or update its governing item *before* engaging the new topic, and fold the pivot into today's journal entry |
 | Context compacted | `publish_doc` | `type: handoff` — right after a compaction, distill the summary plus what you still hold into a handoff a fresh agent could resume from (the session hook reminds you); before a *manual* `/compact`, run `/gitian-kb:handoff` to capture state pre-squash |
 | Feature landed | `publish_doc` (`type: recap`) **and** flip the feature doc's `status` to a terminal value | do both — a recap without the status flip leaves the KB stale |
 
@@ -62,6 +62,31 @@ This skill keeps orientation (RAG at work-start), completion-point distillation,
 memories. Same tools, same `gitian-kb://format/*` authority either way — gitian-spec ships no MCP
 config of its own and rides this plugin's single connection.
 
+## Delegating mechanical work: kb-librarian
+
+Some of what this skill asks for is judgment (what to write, which topics to link); the rest is
+read-heavy or purely mechanical, and shouldn't cost the primary model's context. When this plugin's
+`kb-librarian` subagent (`agents/kb-librarian.md`, haiku-pinned) is available, delegate to it along
+this division of labor:
+
+| Operation | Who | Why |
+|---|---|---|
+| Rev-1 authorship + its publish call | Primary, inline | Emission = authorship; overhead minimal |
+| Mechanical doc revisions (flips, merges) | kb-librarian runner | The ballast lives here (~95% savings) |
+| Journal appends | `append_entry` server-side | Highest frequency; clobber-proof; all clients |
+| Orientation sweep, vocab refresh | kb-librarian | Read-heavy, mechanical, context-fat |
+| Topic/category choice, body content | Primary, always | Judgment + fragmentation risk |
+
+Body authorship and topic/category choice are never delegated — a KB doc's value is that the
+author was there, and under auto-minting any slug a weaker model invents becomes a live topic, so
+the fragmentation risk stays with the primary. A single resource read or one-off tool call also
+stays inline — spawning a subagent costs more than the call it would save. Reach for
+`kb-librarian` for the shape of work in its two right-hand rows: dispatch it for the orientation
+sweep at session start instead of spending 4-6 calls and their full outputs inline, dispatch it for
+a vocab-delta refresh when `vocab_rev` has moved (see below), and hand it mechanical revisions as
+an exact delta ("flip status to landed, add these commits, change nothing else") rather than
+re-emitting a whole manifest yourself.
+
 ## Orient first
 
 Read `gitian-kb://vocab` (see **Topics & categories** below) plus the matching format resource before the *first* use of each publish tool in a session — don't guess the shape:
@@ -74,13 +99,26 @@ Read `gitian-kb://vocab` (see **Topics & categories** below) plus the matching f
 
 `search` before inventing a new slug. The same subject may already have an item under a name you didn't guess — re-publish the *same* slug to update it (appends a revision); only mint a new slug for a genuinely new subject.
 
+## Staying in sync mid-session (`vocab_rev`)
+
+Every successful tool response carries `vocab_rev` — an owner-scoped counter that bumps on any
+vocabulary write: category CRUD, a topic mint/promote/tombstone, including an auto-mint that
+happened as a side effect of someone else's publish. Track the value you last saw. **If a later
+call's `vocab_rev` differs from it, re-read `gitian-kb://vocab` before your next publish** — the
+vocabulary changed mid-session, and publishing against a stale read risks linking a slug that no
+longer means what you think, minting a near-duplicate of something a teammate (or an earlier call
+in this same session) just curated, or missing a category that now fits. This is cheap: the vocab
+resource is small and the freshness signal rides on calls you're already making — no polling, no
+extra round trip. When the drift is more than "one topic changed," dispatch `kb-librarian` for the
+vocab-delta refresh instead of re-reading and re-diffing it yourself.
+
 ## Topics & categories
 
 Doc-doc relatedness is entirely topic-derived now — there's no other correlation signal besides an explicit `related`/wikilink. Link deliberately, every publish:
 
 - **`topics`** (primary tier, "this item is *about* X") — advise 1-3 per item. **`mentions`** (secondary tier, "this item *touches* X" without being about it) — as many as apply. A slug in both collapses to primary.
-- **Prefer existing topics.** `gitian-kb://vocab` lists every live topic with its description and degree — link to what's already there before considering a new one. A vague, catch-all topic (or one linked to nearly everything) contributes almost nothing to relatedness by construction (informativeness falls as membership grows), so precision beats coverage.
-- **Mint deliberately, not by accident.** Naming a topic slug in `topics`/`mentions` that isn't in the vocab is never rejected — the link is stored but inert (excluded from relatedness) until the topic exists, and the publish response carries an advisory `unknown_topics` warning. Don't treat that warning as "fix it later, whatever" — either it names a genuine gap (call `publish_topic` with a slug + a real description) or it's a typo of an existing slug (fix the link). Never let an item accumulate links to topics nobody minted.
+- **Prefer existing topics.** `gitian-kb://vocab` lists every live topic with its description, degree, and class (`curated`/`organic`) — link to what's already there before considering a new one. A vague, catch-all topic (or one linked to nearly everything) contributes almost nothing to relatedness by construction (informativeness falls as membership grows), so precision beats coverage.
+- **A novel slug auto-mints — deliberately, not for free.** Naming a topic slug in `topics`/`mentions` that isn't in the vocab yet is never rejected and never inert: it auto-mints as `organic` and is live in relatedness immediately, no `publish_topic` call required, and the response carries an informational `organic_topics_minted` warning naming what got minted. That lowered floor is not a license to invent freely — every fresh mint is a permanent vocabulary entry someone (a human, or `kb-librarian`'s vocab-delta reports) eventually has to make sense of, and a slug chosen carelessly is exactly how synonym fragmentation creeps in. Check `gitian-kb://vocab` for an existing slug that already names the concept before typing a new one; only mint when the concept is genuinely absent. `publish_topic` still exists to attach a real description to a topic (mints organic too, or refreshes an existing one's description) — call it when the concept deserves documentation, not just to make a link "count" (it never did; class governs trust, not whether a link scores at all). The one slug family that stays inert is a **tombstoned** one: a user veto is never overruled by frontmatter, so the link is stored but excluded from relatedness (advisory `tombstoned_topics` warning) until someone deliberately re-mints it via `publish_topic`.
 - **`category`** — at most one, `null` if none. Pick from `gitian-kb://vocab`'s categories using their routing prompts; an unknown category slug gets the same late-binding treatment (`unknown_category` warning). Categories are authored in the `/kb` UI, not minted over MCP.
 - **Update-over-create bias.** Before minting a brand-new `doc` slug, check whether an existing *active* doc already owns the same primary topics — `list({topic: "<slug>"})` or the `topic` tool's member list — and update that doc instead of publishing a near-duplicate. The server backstops this with an advisory `consider_update` warning on a rev-1 doc mint whose primary topics heavily overlap an existing doc's, but don't rely on the backstop catching everything; check first.
 - **`neighbors`** on a slug returns each hit's `why.topics` (the shared topics driving the score, richest first) and `why.explicit` (non-null when an explicit link floors the weight at 1.0) — use it to understand *why* something surfaced, not just *that* it did.
@@ -103,7 +141,7 @@ field, and retry.
 - Slugs share one namespace per owner across all three primitives — a `memory` and a `doc` can't reuse the same slug. Pick something specific enough not to collide, and `search` first so you don't collide silently.
 - An identical re-publish returns `unchanged: true`. That is success, not an error — don't retry it or treat it as a failure.
 - **Populate frontmatter — don't default to null.** `project`, `repo`, and `tags` must be filled whenever they're derivable, not left null out of habit. The SessionStart hook context (repo, branch, date) gives you what you need for `repo` at the top of the session; set `project` from the obvious repo/workspace name. Explicit `null` is only for work that's genuinely not project- or repo-bound — never a shortcut. Always include `summary`, especially on memories, where it's the only preview a list view shows.
-- `warnings` on a successful publish are advice to act on, not blockers. Twelve codes:
+- `warnings` on a successful publish are advice to act on, not blockers. Thirteen codes:
   - `no_tags` — no tags supplied; add 1-3 to aid retrieval
   - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
   - `no_repo` — `repo` is null; derive it from `git remote get-url origin` (the SessionStart hook already surfaces this) or confirm the work isn't repo-bound
@@ -111,7 +149,8 @@ field, and retry.
   - `impl_done_status_open` — `impl_status: done` but `status` is still draft/designing/in-progress/blocked; reconcile before closing out
   - `terminal_with_next_steps` — `status` is terminal but `next_steps` is non-empty; confirm they still apply
   - `plan_without_files` — an active plan with a `repo` but empty `files`; declare the paths the plan will touch (trailing `/` = subtree) so parallel agents can detect contention
-  - `unknown_topics` — a `topics`/`mentions` slug isn't a live topic (unminted or tombstoned); the link is stored but inert until you `publish_topic` it or fix the slug
+  - `organic_topics_minted` — a `topics`/`mentions` slug wasn't a live topic yet; it auto-minted as `organic` and is already live in relatedness — informational, not a problem to fix, but worth a glance: confirm it names a genuine new concept rather than a typo of an existing slug
+  - `tombstoned_topics` — a `topics`/`mentions` slug names a topic a human tombstoned (vetoed); the link is stored but excluded from relatedness until it's deliberately re-minted via `publish_topic`
   - `unknown_category` — `category` isn't a live category slug; stored but inert until it's minted (`/kb` UI) or fixed
   - `links_update_failed` — the topic/item-link index itself failed to write (distinct from an unknown slug); re-publish (even unchanged) to repair
   - `intents_update_failed` — the file-intents index failed to write; re-publish (even unchanged) to repair
@@ -134,7 +173,9 @@ Worked example: a feature branch merges. Re-publish the design/plan doc's slug �
 
 ## The journal is a running record (entries)
 
-The day's entry is a running record of meaningful events, appended to as they happen — not a day's-end summary gated behind a whole-day bar. When something meaningful happens mid-session — a feature lands, a real blocker appears, a decision settles, a finding surfaces, or the conversation pivots off a thread — re-publish today's entry with it folded in. One entry exists per scope per day; re-publishing the same `date` + `scope` appends a revision, so appending is cheap and safe.
+The day's entry is a running record of meaningful events, appended to as they happen — not a day's-end summary gated behind a whole-day bar. When something meaningful happens mid-session — a feature lands, a real blocker appears, a decision settles, a finding surfaces, or the conversation pivots off a thread — fold it in. One entry exists per scope per day.
+
+**`append_entry` is the primary journaling verb** — the default way to add to today's entry, every time. It's a small, targeted call (`date`/`scope` optional, default today UTC/`work`) that creates the entry if none exists yet or appends `section` to the body if one does, union-merging `tags`/`topics`/`mentions`/`commits`/`related` along the way, without re-sending the whole body — and it's atomic against concurrent writers (two agents appending to the same day's entry both land, neither clobbers the other). Reach for `publish_entry` only for a genuine full rewrite of the day's entry — correcting or restructuring what's already there — not as the everyday path.
 
 The bar for "meaningful" is what a teammate would care to hear at standup — a pivot, a diagnosis, a settled design all clear it; routine mechanical work (a rename, a re-run, a dependency bump) does not. The journal records the day a colleague would want to catch up on, not a command log.
 

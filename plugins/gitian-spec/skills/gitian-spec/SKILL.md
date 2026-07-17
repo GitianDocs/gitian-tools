@@ -30,9 +30,10 @@ authoring discipline; the companion gitian-kb plugin owns the connection and the
 
 gitian-kb is a **required companion**: gitian-spec deliberately ships no MCP config of its own,
 so the `gitian` tools this skill authors through (`search`, `neighbors`, `get`, `history`,
-`file_intents`, `publish_doc`, `publish_entry`) come from gitian-kb's single connection — if the tools are
-missing, install `gitian-kb@gitian-tools`. gitian-kb's publishing rules apply here unchanged and
-by reference: full-manifest publishes (explicit `null`/`[]`, keys never omitted), schema
+`file_intents`, `publish_doc`, `append_entry`, `publish_entry`) come from gitian-kb's single
+connection — if the tools are missing, install `gitian-kb@gitian-tools`. gitian-kb's publishing
+rules apply here unchanged and by reference: full-manifest publishes (explicit `null`/`[]`, keys
+never omitted), schema
 authority (live `gitian-kb://format/*` resources beat cached tool schemas), `warnings` are
 advice to act on, and never auto-publish. An explicit authoring request ("write me a design doc
 for X") *is* explicit publish intent — author, publish, surface the returned url. Don't restate
@@ -63,7 +64,7 @@ Never draft into a vacuum. Before writing anything:
 | Spec / plan / design for feature-shaped work | `publish_doc`, matching `type`, stable slug, `feature` set |
 | Brainstorm | `publish_doc`, `type: design`, `status: draft` |
 | Handoff | `publish_doc`, `type: handoff` |
-| Session notes / what happened today | `publish_entry` (`scope: work`) — or a `type: handoff` doc if it must carry a manifest |
+| Session notes / what happened today | `append_entry` (`scope: work`) — or a `type: handoff` doc if it must carry a manifest; `publish_entry` only for a full rewrite of an existing entry |
 | Progress update on existing work | re-publish the **same** doc slug — revisions are the progress trail; never mint `-v2` slugs |
 | What a landed feature shipped | implementation recap (below) + the terminal status flip |
 
