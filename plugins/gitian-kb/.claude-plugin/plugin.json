@@ -1,7 +1,7 @@
 {
   "name": "gitian-kb",
   "description": "gitian Knowledge Base discipline: query prior work, publish distilled memories/docs/journal entries via the gitian MCP, keep statuses terminal-true.",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "author": {
     "name": "GitianDocs"
   },

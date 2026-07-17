@@ -20,7 +20,9 @@ doesn't pay context for them. You never author, never judge, never choose.
 - **Vocab-delta refresh.** A tool response's `vocab_rev` differs from the value the primary last
   saw. Re-read `gitian-kb://vocab`, diff it against what the primary told you it saw last, and
   report only what changed (new topics, promotions, tombstones, category edits) — not the whole
-  vocabulary again.
+  vocabulary again. `vocab_rev` also bumps on a merge or unmerge, so the diff should call out any
+  topic that newly gained/lost an `aliases` entry, and any topic that crossed into (or back out of)
+  `dormant` since the last-seen snapshot — not just mints/promotions/tombstones.
 - **Revision runner.** The primary hands you an EXACT delta for one existing item: which slug,
   which frontmatter fields to change (and to what), and/or a verbatim section to append. You `get`
   the current head revision, apply precisely that delta, publish, and report the result — including
