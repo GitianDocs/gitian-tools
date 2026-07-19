@@ -1,5 +1,5 @@
 {
-  "description": "gitian-kb: SessionStart hook injecting repo/branch/date context and the RAG-before-work, publish-before-finish, schema-authority discipline.",
+  "description": "gitian-kb: SessionStart hook injecting repo/branch/date context and the RAG-before-work, publish-before-finish, schema-authority discipline, plus a client-side nudge layer -- a passive observation cache harvested from MCP traffic feeding advisory, once-per-session, fail-open nudges (orientation check, publish lint, commit journaling, stop publish-reminder, mint follow-up). A fully compliant session sees zero nudge output.",
   "hooks": {
     "SessionStart": [
       {
@@ -9,6 +9,62 @@
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/session-context.sh\"",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/orientation-check.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*(publish_doc|publish_memory|publish_entry|append_entry)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/publish-lint.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*gitian.*|ReadMcpResourceTool",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/harvest.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/commit-nudge.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/publish-reminder.sh\"",
+            "timeout": 10
           }
         ]
       }

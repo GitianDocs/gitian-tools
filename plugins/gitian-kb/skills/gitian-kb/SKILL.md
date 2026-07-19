@@ -120,6 +120,7 @@ Doc-doc relatedness is entirely topic-derived now — there's no other correlati
 - **Prefer existing topics.** `gitian-kb://vocab` lists every live topic with its description, degree, and class (`curated`/`organic`) — link to what's already there before considering a new one. A vague, catch-all topic (or one linked to nearly everything) contributes almost nothing to relatedness by construction (informativeness falls as membership grows), so precision beats coverage.
 - **Freshness discipline.** `gitian-kb://vocab` also carries `freshness` (0-1) and `dormant` (`freshness` below a fixed threshold) per topic, sorted freshness-descending — curated topics are always `1.0` (a human confirmation never spoils); an organic topic nobody has linked in a while quietly decays, and any new item linking it revives it instantly, no ceremony required. When more than one live topic reads as on-topic, prefer the fresher one; treat the dormant tail as lower-priority, not gone — a dormant topic is due for a second look (re-link deliberately, or let it keep decaying) rather than an automatic pick. This is a display/routing signal only — it never changes what a link means, only which topic to reach for first.
 - **Aliases resolve transparently.** A merged topic never appears as its own entry in `gitian-kb://vocab` — only its canonical does, carrying `aliases: [...]` for every slug now merged into it. A link naming an alias still works (it resolves to the canonical on every read — degree, relatedness, `neighbors`, `topic`), but prefer linking the canonical spelling once you see it in the vocab response rather than perpetuating the old name. Merge/unmerge itself is a human call in the review queue, not a tool call — nothing here mints or removes an alias on your behalf.
+- **Cold domain: mint, don't default.** When nothing in `gitian-kb://vocab` fits the domain of what you're publishing — a genuinely new area of work the vocabulary hasn't caught up to yet — mint 1-3 genuine concept topics with real descriptions via `publish_topic` (not a bare auto-mint left undescribed). Never default to a topic that just names the project or repo (see `project_name_topic` below) and never default to publishing with empty `topics` (see `no_topics` below) — an empty or project-name-only vocab is exactly the situation this rule exists for, not an excuse to skip linking.
 - **A novel slug auto-mints — deliberately, not for free.** Naming a topic slug in `topics`/`mentions` that isn't in the vocab yet is never rejected and never inert: it auto-mints as `organic` and is live in relatedness immediately, no `publish_topic` call required, and the response carries an informational `organic_topics_minted` warning naming what got minted. That lowered floor is not a license to invent freely — every fresh mint is a permanent vocabulary entry someone (a human, or `kb-librarian`'s vocab-delta reports) eventually has to make sense of, and a slug chosen carelessly is exactly how synonym fragmentation creeps in. Check `gitian-kb://vocab` for an existing slug that already names the concept before typing a new one; only mint when the concept is genuinely absent. `publish_topic` still exists to attach a real description to a topic (mints organic too, or refreshes an existing one's description) — call it when the concept deserves documentation, not just to make a link "count" (it never did; class governs trust, not whether a link scores at all). The one slug family that stays inert is a **tombstoned** one: a user veto is never overruled by frontmatter, so the link is stored but excluded from relatedness (advisory `tombstoned_topics` warning) until someone deliberately re-mints it via `publish_topic`.
 - **`category`** — at most one, `null` if none. Pick from `gitian-kb://vocab`'s categories using their routing prompts; an unknown category slug gets the same late-binding treatment (`unknown_category` warning). Categories are authored in the `/kb` UI, not minted over MCP.
 - **Update-over-create bias.** Before minting a brand-new `doc` slug, check whether an existing *active* doc already owns the same primary topics — `list({topic: "<slug>"})` or the `topic` tool's member list — and update that doc instead of publishing a near-duplicate. The server backstops this with an advisory `consider_update` warning on a rev-1 doc mint whose primary topics heavily overlap an existing doc's, but don't rely on the backstop catching everything; check first.
@@ -143,7 +144,7 @@ field, and retry.
 - Slugs share one namespace per owner across all three primitives — a `memory` and a `doc` can't reuse the same slug. Pick something specific enough not to collide, and `search` first so you don't collide silently.
 - An identical re-publish returns `unchanged: true`. That is success, not an error — don't retry it or treat it as a failure.
 - **Populate frontmatter — don't default to null.** `project`, `repo`, and `tags` must be filled whenever they're derivable, not left null out of habit. The SessionStart hook context (repo, branch, date) gives you what you need for `repo` at the top of the session; set `project` from the obvious repo/workspace name. Explicit `null` is only for work that's genuinely not project- or repo-bound — never a shortcut. Always include `summary`, especially on memories, where it's the only preview a list view shows.
-- `warnings` on a successful publish are advice to act on, not blockers. Thirteen codes:
+- `warnings` on a successful publish are advice to act on, not blockers. Sixteen codes:
   - `no_tags` — no tags supplied; add 1-3 to aid retrieval
   - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
   - `no_repo` — `repo` is null; derive it from `git remote get-url origin` (the SessionStart hook already surfaces this) or confirm the work isn't repo-bound
@@ -157,6 +158,9 @@ field, and retry.
   - `links_update_failed` — the topic/item-link index itself failed to write (distinct from an unknown slug); re-publish (even unchanged) to repair
   - `intents_update_failed` — the file-intents index failed to write; re-publish (even unchanged) to repair
   - `consider_update` — a rev-1 doc mint shares primary topics with an existing active doc; check whether you should be updating that doc instead — see **Topics & categories**
+  - `no_topics` — `topics` is empty on a doc/memory publish (entries are exempt); link 1-3 existing topics (see `gitian-kb://vocab`) or mint a genuine new concept
+  - `project_name_topic` — a `topics`/`mentions` slug just repeats `project` or the repo basename; it adds near-zero relatedness signal (every item in the project/repo would carry it) — link a concept topic instead
+  - `undescribed_topics_minted` — the subset of this publish's `organic_topics_minted` slugs whose topic still has no description; call `publish_topic` on each now while the context is fresh
 - On `validation_failed`, fix every listed `issue` and retry — the error's `format_resource` field names the exact guide to re-read.
 - `contention` on a successful `publish_doc` means another active doc declares overlapping `files` — read it (`get`), coordinate or narrow scope, and cross-link it in `related`. If the hit carries a non-null `owner` (a teammate's plan on a shared org repo, not your own), pass that login as `get`'s `owner` param — a bare `get slug` looks up *your own* item at that slug (or `not_found`), not theirs. `file_intents` hits carry the same `owner` field for the same reason.
 - **Org-wide visibility** is read-time and repo-scoped: when a repo belongs to a gitian org you're seated + entitled in, `file_intents`/`contention` widen from your own rows to every currently-seated member's rows on that repo, and `get` with `owner` can read a teammate's doc under the grant its frontmatter declares (`repo` + `files`) — nothing here is a separate opt-in or a different tool.
@@ -186,3 +190,54 @@ The bar for "meaningful" is what a teammate would care to hear at standup — a 
 Publish at natural completion points or on explicit user intent, full stop. Never publish silently, never in bulk, and never mid-task on a timer — the meaningful-event bar and the discipline above only hold if every publish is a deliberate call, not a background habit.
 
 Natural completion points: a design conversation converges, a plan is finished and about to be handed to implementation, a feature merges, a work session wraps up worth an entry, the conversation pivots off a thread, or a compaction has just squashed (or a manual `/compact` is about to squash) undistilled context. If none of those has happened, don't publish yet — keep working and revisit the trigger table later.
+
+## The nudge layer
+
+Underneath this skill, the plugin also runs a client-side nudge layer: hooks (`hooks/*.sh`, POSIX
+sh delegating all JSON work to python3, no `jq`) passively harvest MCP traffic into a local
+observation cache (`~/.claude/gitian-kb/state.json`, overridable via `GITIAN_KB_STATE_FILE`) and
+use it to fire advisory nudges reinforcing the discipline above. This is local scaffolding, not
+server enforcement: every nudge fires at most once per session (an epoch reset on `/clear` re-arms
+them), every hook is fail-open (bad input, corrupt state, a missing `python3` — anything — falls
+through to silence, never a partial nudge, never a non-zero exit), and a session that follows this
+skill from the start is **silent when compliant** — zero nudge output, by design. That silence is
+the release invariant, not an absence of coverage.
+
+The eight nudges:
+
+1. **Session-start vocab digest** (SessionStart) — on startup/clear/compact, a short digest of the
+   cached vocab (topic count, any undescribed organic topics) when the cache already has one; on
+   resume, zero/one/two lines noting a moved vocab revision and/or a stale (>12h) session record.
+   Silent whenever there's nothing worth reporting.
+2. **Orientation check** (PreToolUse on `Edit`/`Write`/`NotebookEdit`) — denies once, advisory, if
+   this session's first file mutation happens with zero gitian KB reads recorded yet: a reminder to
+   `file_intents`/`search`/`neighbors` before touching paths a plan elsewhere may already claim.
+   States explicitly that the denial is advisory and re-sending the identical call passes through
+   untouched.
+3. **Publish lint** (PreToolUse on `publish_doc`/`publish_memory`/`publish_entry`/`append_entry`) —
+   a client-side echo of the server's own lint (empty `topics`, a project/repo-name topic, a
+   near-miss slug against the cached vocab) fired before the call ever reaches the server. The hook
+   hashes the intercepted call, so an identical re-send passes untouched; `append_entry` is exempt
+   from the empty-topics check on append, same as the server (linted only on create).
+4. **Commit-nudge** (PostToolUse on `Bash`) — once per session, if a real commit (or `gh pr merge`)
+   lands with no `append_entry`/journal activity in the last 2 hours, an advisory reminder to
+   journal it. Silent whenever that 2h damper is already satisfied.
+5. **Stop publish-reminder** (Stop) — once per session, blocks-with-reason if this turn crossed the
+   "substantial work" line (≥3 `Edit`/`Write` or ≥1 commit in the transcript) with zero gitian
+   publish/append calls anywhere. Always silent on a resumed `stop_hook_active` pass (loop guard) or
+   whenever something was actually published.
+6. **Mint follow-up** (PostToolUse, riding the same harvest pass as vocab caching) — the first time
+   a session sees a given auto-minted (organic, undescribed) topic slug in a response's
+   `organic_topics_minted` warning, one line naming it and pointing at an immediate `publish_topic`
+   call; silent on every later repeat of a slug already prompted this session.
+7. **Server warnings** — `no_topics`, `project_name_topic`, and `undescribed_topics_minted` (see
+   **Publishing rules** below) are advisory, never rejections — the client-side lint (nudge 3)
+   usually catches the same conditions earlier, before the round trip even happens.
+8. **`/gitian-kb:status`** — run any time to inspect the cache directly: per-server vocab
+   revision/age/topic count/undescribed topics, last publish/append times, the current session's
+   counters, and which once-per-session flags have already fired this epoch. Read-only, never
+   modifies state.
+
+None of this should surprise an agent mid-session: a nudge names itself as advisory, says what to
+do next, and — except for the deny-once orientation check and the block-once stop reminder, both of
+which say so — never stops you from proceeding.

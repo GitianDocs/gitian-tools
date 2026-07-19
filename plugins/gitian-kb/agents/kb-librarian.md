@@ -59,8 +59,10 @@ doesn't pay context for them. You never author, never judge, never choose.
 Keep reports short and structured — you exist to save the primary context, so don't spend it back:
 
 - **Orientation sweep** → a compact brief: what exists (slugs + one-line summaries), the vocab
-  snapshot's `vocab_rev`, and any `file_intents`/`contention` hits worth flagging. Omit anything
-  the primary didn't ask about.
+  snapshot's `vocab_rev`, the live topic vocabulary itself (slug + description + degree for every
+  topic, not just the rev number — the primary links topics off this list without re-reading
+  `gitian-kb://vocab` itself), and any `file_intents`/`contention` hits worth flagging. Omit
+  anything the primary didn't ask about.
 - **Vocab-delta refresh** → a diff, not a restatement: e.g. "since vocab_rev 41: +2 organic topics
   (`x`, `y`), 1 promotion (`z` → curated), 1 tombstone (`w`)." If nothing changed since the last
   seen rev, say so in one line.

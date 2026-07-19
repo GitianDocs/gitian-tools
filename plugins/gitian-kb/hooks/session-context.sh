@@ -14,15 +14,47 @@
 #     `type: handoff` doc before continuing (PreCompact hooks can't reach the model, so the
 #     post-compaction SessionStart is the earliest hookable moment; the compaction summary is
 #     generated from the full pre-squash context, so distilling it now loses the least)
+#   - a source-profile tail computed against the shared nudge state (see state.py), delegated to
+#     session_digest.py: a vocab digest on startup/clear/compact (entirely omitted when the cache
+#     has no topics yet for this server), or on resume, zero/one/two lines noting a moved vocab
+#     revision and/or a stale (>12h) session record. resume never bumps the session epoch, so
+#     flags survive it; clear bumps the epoch first (gks_bump_epoch, re-arming every
+#     once-per-epoch nudge) before anything below is built. An unrecognized/missing source is
+#     treated like startup.
 #
-# Must be fast and silent-safe: no network, plain git plumbing only, always exits 0.
+# Must be fast and silent-safe: no network, plain git plumbing only, always exits 0. The
+# source-profile tail is best-effort layered on top -- a missing python3, a missing
+# session_digest.py, or any error inside it just leaves the tail empty; the static context above
+# (RAG directive included) is built independently and is never lost.
 set -u
 
 # Hook input JSON arrives on stdin; `source` says which SessionStart this is
-# (startup | resume | clear | compact).
+# (startup | resume | clear | compact); `session_id` keys this session's nudge state.
 hook_input="$(cat 2>/dev/null || true)"
 start_source="$(printf '%s' "$hook_input" | grep -o '"source" *: *"[^"]*"' | head -n 1 |
   sed 's/.*"source" *: *"\([^"]*\)".*/\1/')"
+session_id="$(printf '%s' "$hook_input" | grep -o '"session_id" *: *"[^"]*"' | head -n 1 |
+  sed 's/.*"session_id" *: *"\([^"]*\)".*/\1/')"
+
+# Unknown/missing source (unparsable stdin, a future source value, ...) behaves like startup.
+case "$start_source" in
+  startup|resume|clear|compact) ;;
+  *) start_source="startup" ;;
+esac
+
+# --- script dir, to find the sibling python/lib-state helpers (never rely on
+# CLAUDE_PLUGIN_ROOT here -- see lib-state.sh's own note on the script-dir pattern). ------------
+# shellcheck disable=SC1007 # "CDPATH= cd" is a deliberate prefix assignment, not a typo.
+d=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || d=""
+
+# clear re-arms every once-per-epoch nudge; do this before building any output below (the epoch
+# bump is itself silent -- flags/lintHashes/mintPrompted reset, counters zero, lastSeenVocabRev
+# survives per the state contract).
+if [ "$start_source" = "clear" ] && [ -n "$d" ] && [ -f "$d/lib-state.sh" ]; then
+  # shellcheck disable=SC1091 # lib-state.sh resolves at runtime beside this script.
+  . "$d/lib-state.sh"
+  gks_bump_epoch "$session_id"
+fi
 
 project_dir="${CLAUDE_PROJECT_DIR:-.}"
 
@@ -69,6 +101,17 @@ context="${context}\nKB bodies are Obsidian-flavored intent docs (\`[[slug]]\` w
 if [ "$start_source" = "compact" ]; then
   context="${context}\n\nA compaction just squashed this conversation. Before continuing the task, distill the pre-compact work into the KB as a handoff (per the gitian-kb skill): publish a \`type: handoff\` doc -- or update the thread's governing doc -- capturing current state, decisions in flight, and next steps, written so a fresh agent could resume from it alone."
 fi
+
+# --- source-profile tail: vocab digest (startup/clear/compact) or resume delta/staleness lines,
+# plus (every source) recording that this session has now seen the cache's vocab revision --
+# delegated to session_digest.py (see its docstring for the exact contract). Best-effort: any
+# failure here (missing python3/script, corrupt state, anything) just leaves the tail empty;
+# nothing built above is affected.
+extra=""
+if [ -n "$d" ] && [ -f "$d/session_digest.py" ] && command -v python3 >/dev/null 2>&1; then
+  extra="$(python3 "$d/session_digest.py" "$start_source" "$session_id" 2>/dev/null || true)"
+fi
+[ -n "$extra" ] && context="${context}${extra}"
 
 printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$context"
 exit 0
