@@ -127,6 +127,28 @@ Doc-doc relatedness is entirely topic-derived now — there's no other correlati
 - **`neighbors`** on a slug returns each hit's `why.topics` (the shared topics driving the score, richest first) and `why.explicit` (non-null when an explicit link floors the weight at 1.0) — use it to understand *why* something surfaced, not just *that* it did.
 - **`topic`** (hub view) and **`publish_topic`**/**`retract_topic`** (mint/update/tombstone) round out the toolset for working with the vocabulary directly — see their tool descriptions for the exact shapes.
 
+## Topic extraction contract
+
+*(Mirrors `EXTRACTION_CONTRACT` in `src/lib/kb/extract/logic.ts` verbatim, so the two modes
+below can't drift on wording.)*
+
+A doc's topic links get populated one of two ways. An owner can opt into server-side Gemini
+extraction — a background pass, gated per-owner, off by default — which enriches
+`kb_topic_links` asynchronously after the doc publishes. Absent that opt-in (the default), it's
+on you: extract topics yourself before calling `publish_doc`.
+
+Read the topic vocabulary first, then prefer linking to an existing topic over minting a new
+one. Assign 1-3 topics as "primary" (what the doc is about) plus any number of "secondary"
+topics (what it merely touches). Mint at most 2 brand-new kebab-case topics, and only when
+nothing in the existing vocabulary fits. Never re-mint a topic a human has retracted
+(tombstoned) — that veto stands even when the topic would otherwise be a perfect fit.
+
+If a `publish_doc` response carries `doc_without_topics`, the doc landed with empty
+`topics`/`mentions` and the owner isn't on server-side extraction — apply the contract above
+(read `gitian-kb://vocab`, link 1-3 existing primaries, mint at most 2 new ones) and re-publish
+the same slug. This is the same linking discipline **Topics & categories** already asks for on
+every publish; the warning only fires when a topic-less doc slips through anyway.
+
 ## Schema authority
 
 Installed tool schemas are a cached snapshot, not the live contract — they can lag behind the
@@ -144,7 +166,7 @@ field, and retry.
 - Slugs share one namespace per owner across all three primitives — a `memory` and a `doc` can't reuse the same slug. Pick something specific enough not to collide, and `search` first so you don't collide silently.
 - An identical re-publish returns `unchanged: true`. That is success, not an error — don't retry it or treat it as a failure.
 - **Populate frontmatter — don't default to null.** `project`, `repo`, and `tags` must be filled whenever they're derivable, not left null out of habit. The SessionStart hook context (repo, branch, date) gives you what you need for `repo` at the top of the session; set `project` from the obvious repo/workspace name. Explicit `null` is only for work that's genuinely not project- or repo-bound — never a shortcut. Always include `summary`, especially on memories, where it's the only preview a list view shows.
-- `warnings` on a successful publish are advice to act on, not blockers. Sixteen codes:
+- `warnings` on a successful publish are advice to act on, not blockers. Seventeen codes:
   - `no_tags` — no tags supplied; add 1-3 to aid retrieval
   - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
   - `no_repo` — `repo` is null; derive it from `git remote get-url origin` (the SessionStart hook already surfaces this) or confirm the work isn't repo-bound
@@ -159,6 +181,7 @@ field, and retry.
   - `intents_update_failed` — the file-intents index failed to write; re-publish (even unchanged) to repair
   - `consider_update` — a rev-1 doc mint shares primary topics with an existing active doc; check whether you should be updating that doc instead — see **Topics & categories**
   - `no_topics` — `topics` is empty on a doc/memory publish (entries are exempt); link 1-3 existing topics (see `gitian-kb://vocab`) or mint a genuine new concept
+  - `doc_without_topics` — a `publish_doc` landed with no `topics`/`mentions` at all and the owner isn't on server-side extraction; apply the **Topic extraction contract** above and re-publish
   - `project_name_topic` — a `topics`/`mentions` slug just repeats `project` or the repo basename; it adds near-zero relatedness signal (every item in the project/repo would carry it) — link a concept topic instead
   - `undescribed_topics_minted` — the subset of this publish's `organic_topics_minted` slugs whose topic still has no description; call `publish_topic` on each now while the context is fresh
 - On `validation_failed`, fix every listed `issue` and retry — the error's `format_resource` field names the exact guide to re-read.
