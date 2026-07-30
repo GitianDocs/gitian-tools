@@ -72,7 +72,7 @@ this division of labor:
 | Operation | Who | Why |
 |---|---|---|
 | Rev-1 authorship + its publish call | Primary, inline | Emission = authorship; overhead minimal |
-| Mechanical doc revisions (flips, merges) | kb-librarian runner | The ballast lives here (~95% savings) |
+| Mechanical doc revisions (flips, merges) | `patch_doc` / `patch_memory`, inline or via kb-librarian | Server-side merge — the body never re-crosses the wire, so the saving is real and the doc can't be truncated |
 | Journal appends | `append_entry` server-side | Highest frequency; clobber-proof; all clients |
 | Orientation sweep, vocab refresh | kb-librarian | Read-heavy, mechanical, context-fat |
 | Topic/category choice, body content | Primary, always | Judgment + fragmentation risk |
@@ -158,6 +158,37 @@ server's own validation errors are always authoritative. If `validation_failed` 
 cached tool schema didn't mention, that isn't a bug in your call — trust the server, add the
 field, and retry.
 
+## Revising an existing item: patch, don't re-publish
+
+`publish_*` is a full PUT — it requires the entire `body` on every call. That makes it the wrong
+tool for a revision, and not merely a wasteful one: re-emitting a long body is how bodies get
+truncated. Use the patch tools instead.
+
+- **`patch_doc` / `patch_memory`** — `slug` plus only the fields you're changing. Omitted field =
+  unchanged; supplied field = **replaces wholesale**. There is no `body` field on these tools: the
+  server keeps the existing body byte-identical. Use them for status flips, adding `commits`,
+  updating `next_steps`, correcting `files` — every revision that isn't a rewrite.
+- **`body_append`** is the only way a patch touches the body, and it only ever grows it
+  (blank-line separated). An implementation recap appended to a landed doc is exactly this.
+- **Need a list's current contents first?** Replace-wholesale means appending to `related` or
+  `commits` requires knowing what's already there. Read it with `get` and `include_body: false` —
+  a manifest-only read that skips the body entirely. Never rebuild a list from memory.
+- **Entries have no patch tool** — `append_entry` already is one. Omit its `section` to revise
+  only frontmatter and leave the body untouched.
+- **Patch never creates.** An unknown or tombstoned slug returns `not_found`; use `publish_*` to
+  mint or to resurrect.
+- Warnings still apply, computed against the *merged* manifest — patching `status` to `landed`
+  with no commits still raises `landed_without_commits`.
+
+Reserve `publish_doc` / `publish_memory` for rev-1 authorship and genuine full rewrites. If a
+rewrite cuts the body by more than a quarter, the server rejects it with `body_shrank` until you
+re-send with `body_replaced: true` — that guard exists because a truncated body looks exactly
+like a deliberate edit, and it has already destroyed a doc once.
+
+Every write returns `body_length` and `body_hash` (sha256 of the body alone, so frontmatter edits
+never move it). Quote those to confirm a write landed intact — never assert a byte count or an
+"identical" claim you didn't actually compute.
+
 ## Publishing rules
 
 - Every schema key must be present in the call — explicit `null` (or `[]` for list fields) when a value is genuinely unknown, never omit the key. A thin publish that drops required keys is rejected.
@@ -166,7 +197,7 @@ field, and retry.
 - Slugs share one namespace per owner across all three primitives — a `memory` and a `doc` can't reuse the same slug. Pick something specific enough not to collide, and `search` first so you don't collide silently.
 - An identical re-publish returns `unchanged: true`. That is success, not an error — don't retry it or treat it as a failure.
 - **Populate frontmatter — don't default to null.** `project`, `repo`, and `tags` must be filled whenever they're derivable, not left null out of habit. The SessionStart hook context (repo, branch, date) gives you what you need for `repo` at the top of the session; set `project` from the obvious repo/workspace name. Explicit `null` is only for work that's genuinely not project- or repo-bound — never a shortcut. Always include `summary`, especially on memories, where it's the only preview a list view shows.
-- `warnings` on a successful publish are advice to act on, not blockers. Seventeen codes:
+- `warnings` on a successful publish are advice to act on, not blockers. Eighteen codes:
   - `no_tags` — no tags supplied; add 1-3 to aid retrieval
   - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
   - `no_repo` — `repo` is null; derive it from `git remote get-url origin` (the SessionStart hook already surfaces this) or confirm the work isn't repo-bound
@@ -184,6 +215,7 @@ field, and retry.
   - `doc_without_topics` — a `publish_doc` landed with no `topics`/`mentions` at all and the owner isn't on server-side extraction; apply the **Topic extraction contract** above and re-publish
   - `project_name_topic` — a `topics`/`mentions` slug just repeats `project` or the repo basename; it adds near-zero relatedness signal (every item in the project/repo would carry it) — link a concept topic instead
   - `undescribed_topics_minted` — the subset of this publish's `organic_topics_minted` slugs whose topic still has no description; call `publish_topic` on each now while the context is fresh
+  - `body_shrank` — the body you sent is more than 10% shorter than the stored one. Treat this as a truncation alarm, not a formality: compare `body_hash` in the response against what you expected, and if you didn't mean to cut the body, re-read the head revision and republish it in full. Past 25% (and more than 2000 characters) the publish is **rejected** outright with a `body_shrank` error instead — acknowledge a deliberate rewrite with `body_replaced: true`, or avoid the whole problem by using `patch_doc`/`patch_memory`, which never send a body at all
 - On `validation_failed`, fix every listed `issue` and retry — the error's `format_resource` field names the exact guide to re-read.
 - `contention` on a successful `publish_doc` means another active doc declares overlapping `files` — read it (`get`), coordinate or narrow scope, and cross-link it in `related`. If the hit carries a non-null `owner` (a teammate's plan on a shared org repo, not your own), pass that login as `get`'s `owner` param — a bare `get slug` looks up *your own* item at that slug (or `not_found`), not theirs. `file_intents` hits carry the same `owner` field for the same reason.
 - **Org-wide visibility** is read-time and repo-scoped: when a repo belongs to a gitian org you're seated + entitled in, `file_intents`/`contention` widen from your own rows to every currently-seated member's rows on that repo, and `get` with `owner` can read a teammate's doc under the grant its frontmatter declares (`repo` + `files`) — nothing here is a separate opt-in or a different tool.
