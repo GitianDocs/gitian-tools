@@ -36,6 +36,9 @@ PINNED_RUNTIME_LITERALS = (
     "additionalContext",
     "gitian-kb://format/",
     "NEVER inject gitian markup",
+    "Multi-KB",
+    "kb: <slug>",
+    "defaulting to `home`",
 )
 
 
@@ -50,7 +53,7 @@ def _session_defaults(**overrides):
         "gitianReads": 0,
         "edits": 0,
         "publishes": 0,
-        "lastSeenVocabRev": None,
+        "lastSeenVocabRev": {},
         "lintHashes": [],
         "mintPrompted": [],
         "updatedAt": _iso(datetime.now(timezone.utc)),
@@ -61,6 +64,13 @@ def _session_defaults(**overrides):
 
 def _topic(slug, description="", degree=1):
     return {"slug": slug, "description": description, "degree": degree}
+
+
+def _last_seen(rev):
+    """Build the sessions.<sid>.lastSeenVocabRev[server][kb] fixture shape (state.py's
+    _SESSION_DEFAULTS): a single (SERVER_KEY, "home") observation -- the default bucket every
+    reader/writer in this plugin falls back to (see session_digest.py's DEFAULT_KB_SLUG)."""
+    return {SERVER_KEY: {"home": rev}}
 
 
 class SessionContextTestCase(unittest.TestCase):
@@ -199,7 +209,9 @@ class ResumeProfile(SessionContextTestCase):
         recent = _iso(datetime.now(timezone.utc) - timedelta(minutes=5))
         self.seed_state(
             servers={SERVER_KEY: {"vocabRev": 5, "topics": [_topic("kb", "d", 1)]}},
-            sessions={"sess-r1": _session_defaults(lastSeenVocabRev=5, updatedAt=recent)},
+            sessions={
+                "sess-r1": _session_defaults(lastSeenVocabRev=_last_seen(5), updatedAt=recent)
+            },
         )
         proc = self.run_hook(self.envelope("resume", session_id="sess-r1"))
         context = self.context_of(proc, "resume-unmoved")
@@ -212,7 +224,9 @@ class ResumeProfile(SessionContextTestCase):
         recent = _iso(datetime.now(timezone.utc) - timedelta(minutes=5))
         self.seed_state(
             servers={SERVER_KEY: {"vocabRev": 9, "topics": [_topic("kb", "d", 1)]}},
-            sessions={"sess-r2": _session_defaults(lastSeenVocabRev=5, updatedAt=recent)},
+            sessions={
+                "sess-r2": _session_defaults(lastSeenVocabRev=_last_seen(5), updatedAt=recent)
+            },
         )
         proc = self.run_hook(self.envelope("resume", session_id="sess-r2"))
         context = self.context_of(proc, "resume-moved")
@@ -227,7 +241,9 @@ class ResumeProfile(SessionContextTestCase):
         stale = _iso(datetime.now(timezone.utc) - timedelta(hours=13))
         self.seed_state(
             servers={SERVER_KEY: {"vocabRev": 3, "topics": [_topic("kb", "d", 1)]}},
-            sessions={"sess-r3": _session_defaults(lastSeenVocabRev=3, updatedAt=stale)},
+            sessions={
+                "sess-r3": _session_defaults(lastSeenVocabRev=_last_seen(3), updatedAt=stale)
+            },
         )
         proc = self.run_hook(self.envelope("resume", session_id="sess-r3"))
         context = self.context_of(proc, "resume-stale")
@@ -236,11 +252,11 @@ class ResumeProfile(SessionContextTestCase):
         self.assertIn("running record", context)
 
     def test_no_prior_baseline_stays_silent_on_delta(self):
-        # lastSeenVocabRev is None -- nothing to say "moved" from.
+        # lastSeenVocabRev has no bucket for this (server, kb) yet -- nothing to say "moved" from.
         recent = _iso(datetime.now(timezone.utc) - timedelta(minutes=5))
         self.seed_state(
             servers={SERVER_KEY: {"vocabRev": 9, "topics": [_topic("kb", "d", 1)]}},
-            sessions={"sess-r4": _session_defaults(lastSeenVocabRev=None, updatedAt=recent)},
+            sessions={"sess-r4": _session_defaults(lastSeenVocabRev={}, updatedAt=recent)},
         )
         proc = self.run_hook(self.envelope("resume", session_id="sess-r4"))
         context = self.context_of(proc, "resume-no-baseline")
@@ -250,7 +266,9 @@ class ResumeProfile(SessionContextTestCase):
         self.seed_state(
             servers={SERVER_KEY: {"vocabRev": 3, "topics": [_topic("kb", "d", 1)]}},
             sessions={
-                "sess-r5": _session_defaults(epoch=2, lastSeenVocabRev=3, flags={"orientation": True})
+                "sess-r5": _session_defaults(
+                    epoch=2, lastSeenVocabRev=_last_seen(3), flags={"orientation": True}
+                )
             },
         )
         self.run_hook(self.envelope("resume", session_id="sess-r5"))
@@ -265,11 +283,13 @@ class ResumeProfile(SessionContextTestCase):
         recent = _iso(datetime.now(timezone.utc) - timedelta(minutes=5))
         self.seed_state(
             servers={SERVER_KEY: {"vocabRev": 9, "topics": [_topic("kb", "d", 1)]}},
-            sessions={"sess-r6": _session_defaults(lastSeenVocabRev=5, updatedAt=recent)},
+            sessions={
+                "sess-r6": _session_defaults(lastSeenVocabRev=_last_seen(5), updatedAt=recent)
+            },
         )
         self.run_hook(self.envelope("resume", session_id="sess-r6"))
         state = self.dump_state()
-        self.assertEqual(state["sessions"]["sess-r6"]["lastSeenVocabRev"], 9)
+        self.assertEqual(state["sessions"]["sess-r6"]["lastSeenVocabRev"][SERVER_KEY]["home"], 9)
 
 
 class PinnedLiteralsAndRobustness(SessionContextTestCase):

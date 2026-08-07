@@ -136,7 +136,7 @@ class VocabRevCapture(HarvestTestCase):
 
         state = self.dump_state()
         self.assertEqual(state["servers"][SERVER_KEY]["vocabRev"], 5)
-        self.assertEqual(state["sessions"]["sess-1"]["lastSeenVocabRev"], 5)
+        self.assertEqual(state["sessions"]["sess-1"]["lastSeenVocabRev"][SERVER_KEY]["home"], 5)
 
     def test_max_wins_on_regression(self):
         self.run_harvest(
@@ -154,7 +154,7 @@ class VocabRevCapture(HarvestTestCase):
 
         state = self.dump_state()
         self.assertEqual(state["servers"][SERVER_KEY]["vocabRev"], 9)
-        self.assertEqual(state["sessions"]["sess-1"]["lastSeenVocabRev"], 9)
+        self.assertEqual(state["sessions"]["sess-1"]["lastSeenVocabRev"][SERVER_KEY]["home"], 9)
 
     def test_multiple_occurrences_take_the_max(self):
         proc = self.run_harvest(
@@ -418,7 +418,7 @@ class NestedMcpEnvelope(HarvestTestCase):
 
         state = self.dump_state()
         self.assertEqual(state["servers"][SERVER_KEY]["vocabRev"], 19)
-        self.assertEqual(state["sessions"]["sess-1"]["lastSeenVocabRev"], 19)
+        self.assertEqual(state["sessions"]["sess-1"]["lastSeenVocabRev"][SERVER_KEY]["home"], 19)
 
     def test_vocab_rev_and_topics_harvested_from_nested_vocab_resource_read(self):
         topics = [{"slug": "auth", "description": "Auth flows", "degree": 3}]
@@ -435,7 +435,7 @@ class NestedMcpEnvelope(HarvestTestCase):
         server = state["servers"][SERVER_KEY]
         self.assertEqual(server["vocabRev"], 42)
         self.assertEqual(server["topics"], topics)
-        self.assertEqual(state["sessions"]["sess-1"]["lastSeenVocabRev"], 42)
+        self.assertEqual(state["sessions"]["sess-1"]["lastSeenVocabRev"][SERVER_KEY]["home"], 42)
 
     def test_last_publish_slug_captured_from_nested_publish_success(self):
         proc = self.run_harvest(

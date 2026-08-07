@@ -45,7 +45,13 @@ _SESSION_DEFAULTS = {
     "gitianReads": 0,
     "edits": 0,
     "publishes": 0,
-    "lastSeenVocabRev": None,
+    # Multi-KB phase 1 (see [[multi-kb-core-plan]]): keyed sessions.<sid>.lastSeenVocabRev[server
+    # url][kb slug] -> vocab_rev int, not a bare scalar -- a session's notion of "vocab I've seen"
+    # is scoped per (server, kb) now that gitian-kb://vocab serves a caller's TARGET kb rather
+    # than one global vocabulary. Writers with no kb signal (harvest.py, session_digest.py's own
+    # resume/digest pass -- neither has a token to ask which kb a session is bound to) default to
+    # the "home" bucket; see session_digest.py's DEFAULT_KB_SLUG.
+    "lastSeenVocabRev": {},
     "lintHashes": [],
     "mintPrompted": [],
 }

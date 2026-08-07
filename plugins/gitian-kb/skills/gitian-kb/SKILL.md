@@ -99,18 +99,33 @@ Read `gitian-kb://vocab` (see **Topics & categories** below) plus the matching f
 
 `search` before inventing a new slug. The same subject may already have an item under a name you didn't guess — re-publish the *same* slug to update it (appends a revision); only mint a new slug for a genuinely new subject.
 
+## Targeting a KB (`kb`)
+
+Every tool takes an optional `kb` (a KB slug) alongside its other arguments — you can belong to more than one (your `home` KB plus any custom ones you're a member of). Most sessions never need to set it: a write with no `kb` lands in `home`, and a bare slug on a single-target read (`get`/`history`) falls through to the rest of your KBs only if it isn't found in the default. Pass `kb` explicitly whenever the work belongs to a KB other than `home` — don't assume a `kb` you passed on one call carries forward to the next; every call is independent.
+
+- **When to pass it.** Sweeping reads (`search`/`list`/`neighbors`/`file_intents`) sweep every KB you belong to by default, each hit labeled `kb: <slug>` — pass `kb` only to narrow to one you already know you want. Writes (`publish_*`/`patch_*`/`append_entry`/`retract_item`/`publish_topic`/`retract_topic`) and the single-target reads (`get`, `history`, `topic`) default to `home` — pass `kb` whenever you're working inside a different one, on every call, not just the first. Never pair `kb` with `owner` on `get` — the two are rejected together (`validation_failed`): a foreign read (a teammate's org-widened doc) is always looked up in the author's own `home` KB, so a contended doc reached via `owner` never also takes `kb`.
+- **`ambiguous_slug`.** A bare slug (no `kb` given) to `get`/`history` that exists in more than one of your KBs — beyond your default KB, which always wins the tie and never counts as ambiguous — comes back as an `ambiguous_slug` error naming `candidates` (`{ kb, primitive }` pairs, drawn only from KBs the slug actually matched). Retry the *exact same call* with `kb` set to the candidate you mean. Never guess which one by picking the first candidate, by title, or by recency — the error exists precisely because that guess is unsafe.
+- **`reserved_kb_slug`.** Not a tool-call error — creating a custom KB (the `/kb` UI's create flow; there is no MCP tool for it in phase 1) rejects a requested slug that collides with a fixed route (`home`, `memory`, `doc`, `entry`, `graph`) with this code. If you're ever asked to help name a new KB, steer clear of those five.
+
 ## Staying in sync mid-session (`vocab_rev`)
 
-Every successful tool response carries `vocab_rev` — an owner-scoped counter that bumps on any
-vocabulary write: category CRUD, a topic mint/promote/tombstone, including an auto-mint that
-happened as a side effect of someone else's publish. Track the value you last saw. **If a later
-call's `vocab_rev` differs from it, re-read `gitian-kb://vocab` before your next publish** — the
-vocabulary changed mid-session, and publishing against a stale read risks linking a slug that no
-longer means what you think, minting a near-duplicate of something a teammate (or an earlier call
-in this same session) just curated, or missing a category that now fits. This is cheap: the vocab
-resource is small and the freshness signal rides on calls you're already making — no polling, no
-extra round trip. When the drift is more than "one topic changed," dispatch `kb-librarian` for the
-vocab-delta refresh instead of re-reading and re-diffing it yourself.
+Every successful tool response carries `vocab_rev` — a counter scoped to the **target KB** (the
+`kb` a write/single-target read resolves to, or your default `home` when omitted) that bumps on
+any vocabulary write to that KB: category CRUD, a topic mint/promote/tombstone, including an
+auto-mint that happened as a side effect of someone else's publish. Track the value you last saw
+*per KB* — a `vocab_rev` from a custom KB and one from `home` are different counters and never
+comparable to each other. **If a later call's `vocab_rev` differs from the one you last saw for
+that same KB, re-read `gitian-kb://vocab` before your next publish into it** — the vocabulary
+changed mid-session, and publishing against a stale read risks linking a slug that no longer means
+what you think, minting a near-duplicate of something a teammate (or an earlier call in this same
+session) just curated, or missing a category that now fits. This is cheap: the vocab resource is
+small and the freshness signal rides on calls you're already making — no polling, no extra round
+trip. One catch: `gitian-kb://vocab` is a static URI with no per-read `kb` argument, so it always
+serves your **default** KB (`home`, unless your session binds another) — a session working a
+non-default `kb` sees that KB's `vocab_rev` on every response but has no resource read that
+reflects it, so don't chase that counter against `gitian-kb://vocab`; there's nothing yet to
+re-read it against. When the drift is more than "one topic changed" in your default KB, dispatch
+`kb-librarian` for the vocab-delta refresh instead of re-reading and re-diffing it yourself.
 
 ## Topics & categories
 
@@ -194,7 +209,7 @@ never move it). Quote those to confirm a write landed intact — never assert a 
 - Every schema key must be present in the call — explicit `null` (or `[]` for list fields) when a value is genuinely unknown, never omit the key. A thin publish that drops required keys is rejected.
 - Never write `created_at`, `updated_at`, `rev`, or `author` yourself — the platform stamps these from the token and the revision; they aren't yours to set.
 - Slugs are stable, lowercase-kebab, and name the thing (`auth-token-nullable`, not `note-1`). Entries are the exception: they take `date` + `scope`, never a slug — the platform derives one from both.
-- Slugs share one namespace per owner across all three primitives — a `memory` and a `doc` can't reuse the same slug. Pick something specific enough not to collide, and `search` first so you don't collide silently.
+- Slugs share one namespace per KB across all three primitives — a `memory` and a `doc` can't reuse the same slug. Pick something specific enough not to collide, and `search` first so you don't collide silently.
 - An identical re-publish returns `unchanged: true`. That is success, not an error — don't retry it or treat it as a failure.
 - **Populate frontmatter — don't default to null.** `project`, `repo`, and `tags` must be filled whenever they're derivable, not left null out of habit. The SessionStart hook context (repo, branch, date) gives you what you need for `repo` at the top of the session; set `project` from the obvious repo/workspace name. Explicit `null` is only for work that's genuinely not project- or repo-bound — never a shortcut. Always include `summary`, especially on memories, where it's the only preview a list view shows.
 - `warnings` on a successful publish are advice to act on, not blockers. Eighteen codes:

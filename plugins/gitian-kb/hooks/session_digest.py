@@ -17,9 +17,13 @@ otherwise-static context session-context.sh already builds:
     full digest replay would be redundant with what startup/clear/compact already showed.
 
 An unrecognized/missing source is treated like startup. Every source, after computing its text,
-best-effort stamps sessions.<sid>.lastSeenVocabRev to the cache's current vocabRev (monotonic:
-never regresses an already-higher value) -- this session has now seen the digest/delta, so its
-notion of "vocab I've seen" should track the cache.
+best-effort stamps sessions.<sid>.lastSeenVocabRev[server_key][kb_slug] to the cache's current
+vocabRev (monotonic: never regresses an already-higher value) -- this session has now seen the
+digest/delta, so its notion of "vocab I've seen" should track the cache. Multi-KB phase 1 (see
+[[multi-kb-core-plan]]): lastSeenVocabRev is keyed per (server, kb), not a bare scalar, since
+gitian-kb://vocab now serves a caller's TARGET kb rather than one global vocabulary -- this script
+has no token to ask which kb a session is bound to, so every read/write here defaults to the
+DEFAULT_KB_SLUG ("home") bucket.
 
 State is read via state.load() unlocked (a point-in-time read for display text needs no lock);
 the one write here goes through state.with_lock(), same read-modify-write shape as state.py's
@@ -56,6 +60,10 @@ import state as state_mod
 MAX_DIGEST_LINES = 25
 STALE_SESSION_HOURS = 12
 KNOWN_SOURCES = ("startup", "resume", "clear", "compact")
+# Multi-KB phase 1 default bucket for lastSeenVocabRev[server_key][...] -- this script has no
+# token, so it can never resolve which kb (if any) a session is bound to; every read/write here
+# lands in "home" until a later task threads real kb targeting through the nudge layer.
+DEFAULT_KB_SLUG = "home"
 
 
 def _server_key():
@@ -138,12 +146,26 @@ def _digest_text(server):
     return "\n".join(lines)
 
 
-def _resume_text(server, session):
+def _last_seen_vocab_rev(session, server_key, kb_slug=DEFAULT_KB_SLUG):
+    """Read sessions.<sid>.lastSeenVocabRev[server_key][kb_slug] -- the nested per-(server, kb)
+    shape (see state.py's _SESSION_DEFAULTS). Missing at any level -- never seen yet, or a legacy
+    bare-scalar value written before this keying existed -- reads as no prior baseline, same as
+    the old bare-None reading it replaces."""
+    last_seen = session.get("lastSeenVocabRev")
+    if not isinstance(last_seen, dict):
+        return None
+    bucket = last_seen.get(server_key)
+    if not isinstance(bucket, dict):
+        return None
+    return _as_number(bucket.get(kb_slug))
+
+
+def _resume_text(server, session, server_key):
     """Resume-only delta/staleness lines -- zero, one, or both, each independent of the other."""
     lines = []
 
     cache_rev = _as_number(server.get("vocabRev"))
-    last_seen = _as_number(session.get("lastSeenVocabRev"))
+    last_seen = _last_seen_vocab_rev(session, server_key)
     # last_seen is None the first time this session has ever seen a vocab_rev at all -- there is
     # no prior baseline to say it "moved" from, so stay silent rather than print a confusing
     # "None -> 5" line.
@@ -167,10 +189,10 @@ def _resume_text(server, session):
     return "\n".join(lines)
 
 
-def _record_seen_vocab_rev(sid, cache_rev):
-    """Best-effort: stamp sessions.<sid>.lastSeenVocabRev = cache_rev (monotonic max, never a
-    regression) under the state lock -- the same read-modify-write shape as state.py's own
-    mutating subcommands. No-op without a sid or a known cache_rev."""
+def _record_seen_vocab_rev(sid, server_key, cache_rev, kb_slug=DEFAULT_KB_SLUG):
+    """Best-effort: stamp sessions.<sid>.lastSeenVocabRev[server_key][kb_slug] = cache_rev
+    (monotonic max, never a regression) under the state lock -- the same read-modify-write shape
+    as state.py's own mutating subcommands. No-op without a sid or a known cache_rev."""
     if not sid or cache_rev is None:
         return
     path = state_mod.state_path()
@@ -183,8 +205,14 @@ def _record_seen_vocab_rev(sid, cache_rev):
             session = {}
             sessions[sid] = session
         state_mod.ensure_session_shape(session)
-        current = _as_number(session.get("lastSeenVocabRev"))
-        session["lastSeenVocabRev"] = cache_rev if current is None else max(cache_rev, current)
+        last_seen = session.get("lastSeenVocabRev")
+        last_seen = last_seen if isinstance(last_seen, dict) else {}
+        bucket = last_seen.get(server_key)
+        bucket = dict(bucket) if isinstance(bucket, dict) else {}
+        current = _as_number(bucket.get(kb_slug))
+        bucket[kb_slug] = cache_rev if current is None else max(cache_rev, current)
+        last_seen[server_key] = bucket
+        session["lastSeenVocabRev"] = last_seen
         session["updatedAt"] = state_mod.now_iso()
         state_mod.save(path, state_mod.finalize(state))
 
@@ -198,10 +226,11 @@ def build(source, sid):
     if source not in KNOWN_SOURCES:
         source = "startup"
 
+    server_key = _server_key()
     state = state_mod.load()
     servers = state.get("servers")
     servers = servers if isinstance(servers, dict) else {}
-    server = servers.get(_server_key())
+    server = servers.get(server_key)
     server = server if isinstance(server, dict) else {}
 
     sessions = state.get("sessions")
@@ -210,11 +239,11 @@ def build(source, sid):
     session = session if isinstance(session, dict) else {}
 
     if source == "resume":
-        text = _resume_text(server, session)
+        text = _resume_text(server, session, server_key)
     else:
         text = _digest_text(server)
 
-    _record_seen_vocab_rev(sid, _as_number(server.get("vocabRev")))
+    _record_seen_vocab_rev(sid, server_key, _as_number(server.get("vocabRev")))
 
     return text
 

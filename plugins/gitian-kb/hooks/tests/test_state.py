@@ -168,7 +168,7 @@ class BumpEpoch(StateTestCase):
             {
                 "sessions": {
                     "sidB": {
-                        "lastSeenVocabRev": 5,
+                        "lastSeenVocabRev": {"https://gitian.dev/api/mcp": {"home": 5}},
                         "lintHashes": ["deadbeef"],
                         "mintPrompted": ["some-slug"],
                     }
@@ -191,7 +191,8 @@ class BumpEpoch(StateTestCase):
         self.assertEqual(after["edits"], 0)
         self.assertEqual(after["gitianReads"], 0)
         self.assertEqual(after["publishes"], 0)
-        self.assertEqual(after["lastSeenVocabRev"], 5)  # preserved across epoch bump
+        # preserved across epoch bump -- per-(server, kb), see state.py's _SESSION_DEFAULTS
+        self.assertEqual(after["lastSeenVocabRev"], {"https://gitian.dev/api/mcp": {"home": 5}})
 
         rearmed = self.run_state("flag-once", "sidB", "orientation")
         self.assertEqual(rearmed.stdout.strip(), "fire")
@@ -231,7 +232,7 @@ class SevenDayPruning(StateTestCase):
                     "gitianReads": 0,
                     "edits": 0,
                     "publishes": 0,
-                    "lastSeenVocabRev": None,
+                    "lastSeenVocabRev": {},
                     "lintHashes": [],
                     "mintPrompted": [],
                     "updatedAt": old_iso,
@@ -242,7 +243,7 @@ class SevenDayPruning(StateTestCase):
                     "gitianReads": 0,
                     "edits": 0,
                     "publishes": 0,
-                    "lastSeenVocabRev": None,
+                    "lastSeenVocabRev": {},
                     "lintHashes": [],
                     "mintPrompted": [],
                     "updatedAt": recent_iso,

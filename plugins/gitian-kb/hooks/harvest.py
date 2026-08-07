@@ -31,6 +31,12 @@ import sys
 # state` directly rather than shelling out").
 import state as state_mod
 
+# Multi-KB phase 1 (see [[multi-kb-core-plan]]): sessions.<sid>.lastSeenVocabRev is keyed per
+# (server, kb) now (state.py's _SESSION_DEFAULTS), not a bare scalar -- harvest.py doesn't parse
+# which kb a response targeted, so every observation here lands in the "home" bucket, same
+# fallback session_digest.py's own reader/writer use.
+DEFAULT_KB_SLUG = "home"
+
 READ_SUFFIXES = ("get", "search", "list", "neighbors", "topic", "history", "file_intents")
 PUBLISH_MARKERS = ("publish_doc", "publish_memory", "publish_entry", "publish_topic", "append_entry")
 APPEND_MARKERS = ("append_entry", "publish_entry")
@@ -370,9 +376,15 @@ def apply_effect(effect):
         if effect["session_vocab_rev"] is not None or effect["incr_reads"] or effect["incr_publishes"]:
             session = _touch_session(state, effect["session_id"])
             if effect["session_vocab_rev"] is not None:
-                session["lastSeenVocabRev"] = max(
-                    effect["session_vocab_rev"], _as_counter(session.get("lastSeenVocabRev"))
+                last_seen = session.get("lastSeenVocabRev")
+                last_seen = last_seen if isinstance(last_seen, dict) else {}
+                bucket = last_seen.get(effect["server_key"])
+                bucket = dict(bucket) if isinstance(bucket, dict) else {}
+                bucket[DEFAULT_KB_SLUG] = max(
+                    effect["session_vocab_rev"], _as_counter(bucket.get(DEFAULT_KB_SLUG))
                 )
+                last_seen[effect["server_key"]] = bucket
+                session["lastSeenVocabRev"] = last_seen
             if effect["incr_reads"]:
                 session["gitianReads"] = _as_counter(session.get("gitianReads")) + 1
             if effect["incr_publishes"]:
