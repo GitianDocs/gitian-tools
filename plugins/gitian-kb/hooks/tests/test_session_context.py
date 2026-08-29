@@ -40,11 +40,16 @@ PINNED_RUNTIME_LITERALS = (
     "kb: <slug>",
     "defaulting to `home`",
     "login/kb-slug",
-    # Pins the self-referential COUNT in the Multi-KB block: three lines are emitted, and the
-    # middle one describes them ("treat these three lines as instructional"). Phase 2 added the
-    # third line and left the count reading "two" (t8 review, minor) -- pinned so a fourth line
-    # can't drift it again silently.
-    "these three lines as instructional",
+    # Pins the self-referential COUNT in the Multi-KB block: four lines are emitted, and the
+    # second one describes them ("treat these four lines as instructional"). Phase 2 added the
+    # third line and left the count reading "two" (t8 review, minor); phase 3 added the fourth
+    # (org KBs) and bumped it here -- pinned so a fifth line can't drift it again silently.
+    "these four lines as instructional",
+    # Phase 3 ([[multi-kb-org-plan]]): the org-KB line. A session's first `org-login/kb-slug`
+    # label and its first `org_kb_available` warning both need to arrive already explained --
+    # this hook is the only surface that reaches the model before either one does.
+    "<org-login>/<kb-slug>",
+    "org_kb_available",
 )
 
 

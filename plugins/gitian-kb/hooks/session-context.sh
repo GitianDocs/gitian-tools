@@ -8,11 +8,14 @@
 #     (no remote, detached HEAD, not a git repo at all)
 #   - the RAG directive: search + neighbors before substantive work, publish before finishing
 #     per the gitian-kb skill, always populate frontmatter (never omit `summary`)
-#   - three multi-KB targeting lines (instructional, not fetched -- this hook has no token, so it
+#   - four multi-KB targeting lines (instructional, not fetched -- this hook has no token, so it
 #     can't call listKbsForUser itself): sweeping reads label each hit `kb: <slug>` and cover
 #     every KB the caller belongs to; writes take an optional `kb`, defaulting to `home` unless
-#     the session binds one; and (phase 2) sweeps also cover read-only linked KBs, whose hits
-#     label qualified `login/kb-slug` and must be passed back in that exact form
+#     the session binds one; (phase 2) sweeps also cover read-only linked KBs, whose hits
+#     label qualified `login/kb-slug` and must be passed back in that exact form; and (phase 3)
+#     an org KB is a membership DERIVED from an org seat -- read AND write, qualified
+#     `org-login/kb-slug` label -- so team work about an org repo belongs there, not in `home`
+#     where teammates cannot see it (the server's own `org_kb_available` warning says the same)
 #   - the schema-authority reminder: live gitian-kb://format/* resources beat cached tool
 #     schemas -- trust validation_failed over a stale cached schema
 #   - on source=compact only: a handoff directive -- distill the pre-compact work into a
@@ -101,8 +104,9 @@ context="gitian-kb session context:"
 context="${context}\n- date (UTC): ${today}"
 context="${context}\n\nRAG discipline: before substantive work, \`search\` the gitian KB for the task topic and \`neighbors\` the best hit -- when a repo is listed above, \`file_intents\` it to see which in-flight plans claim which paths. Before finishing, publish per the gitian-kb skill -- read \`gitian-kb://vocab\` before linking/minting topics, populate frontmatter (including \`topics\`/\`mentions\`/\`category\`) using the repo/date above, and never omit \`summary\`."
 context="${context}\nMulti-KB: sweeping reads (\`search\`/\`list\`/\`neighbors\`/\`file_intents\`) cover every KB you belong to, each hit labeled \`kb: <slug>\` -- pass \`kb\` to narrow to one."
-context="${context}\nWrites (\`publish_*\`/\`patch_*\`/\`append_entry\`/\`retract_item\`/\`publish_topic\`/\`retract_topic\`) take an optional \`kb\`, defaulting to \`home\` unless this session binds one. This hook has no token to check your KB membership, so treat these three lines as instructional, not a fetched list."
+context="${context}\nWrites (\`publish_*\`/\`patch_*\`/\`append_entry\`/\`retract_item\`/\`publish_topic\`/\`retract_topic\`) take an optional \`kb\`, defaulting to \`home\` unless this session binds one. This hook has no token to check your KB membership, so treat these four lines as instructional, not a fetched list."
 context="${context}\nSweeps also cover KBs linked to you (read-only, one hop). Those hits label qualified -- \`kb: <login>/<kb-slug>\` -- so pass \`login/kb-slug\` back verbatim when following one up; a bare slug means YOUR KB of that name."
+context="${context}\nAn ORG KB is a membership you hold through an org SEAT -- derived, never invited, and readable AND writable like any other membership; it appears while you hold the seat and disappears when you do not. Its hits label qualified too (\`kb: <org-login>/<kb-slug>\`). Team work about an org repo belongs in the ORG KB -- a doc published into \`home\` is invisible to teammates, which is what the server's advisory \`org_kb_available\` warning is telling you."
 context="${context}\nSchema authority: live \`gitian-kb://format/*\` resources are authoritative over cached tool schemas. On \`validation_failed\` naming a field the cached schema doesn't list, trust the server and retry."
 context="${context}\nKB bodies are Obsidian-flavored intent docs (\`[[slug]]\` wikilinks, snippets where they clarify). Reference existing \`@gitian\` anchors only when the repo is instrumented -- NEVER inject gitian markup into a codebase that isn't already using the gitian docs system."
 

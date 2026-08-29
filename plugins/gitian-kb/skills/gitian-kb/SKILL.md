@@ -101,11 +101,11 @@ Read `gitian-kb://vocab` (see **Topics & categories** below) plus the matching f
 
 ## Targeting a KB (`kb`)
 
-Every tool takes an optional `kb` alongside its other arguments — you can belong to more than one KB (your `home` KB plus any custom ones you're a member of), and others can be linked to you read-only. Two forms are accepted: a bare slug for a KB of your own, or a qualified `login/kb-slug` for one linked to you (see **Linked KBs** below). Most sessions never need to set it: a write with no `kb` lands in `home`, and a bare slug on a single-target read (`get`/`history`) falls through to the rest of your KBs only if it isn't found in the default. Pass `kb` explicitly whenever the work belongs to a KB other than `home` — don't assume a `kb` you passed on one call carries forward to the next; every call is independent.
+Every tool takes an optional `kb` alongside its other arguments — you can belong to more than one KB (your `home` KB, any custom ones you're a member of, and any **org** KB you hold a seat for), and others can be linked to you read-only. Two forms are accepted: a bare slug for a KB of your own, or a qualified `login/kb-slug` — which addresses both a KB linked to you (see **Linked KBs** below) and an org KB, whose `login` is the org's (see **Org KBs** below). Most sessions never need to set it: a write with no `kb` lands in `home`, and a bare slug on a single-target read (`get`/`history`) falls through to the rest of your KBs only if it isn't found in the default. Pass `kb` explicitly whenever the work belongs to a KB other than `home` — don't assume a `kb` you passed on one call carries forward to the next; every call is independent.
 
-- **When to pass it.** Sweeping reads (`search`/`list`/`neighbors`/`file_intents`) sweep every KB you belong to *plus* any KB linked to you (see **Linked KBs** below) by default, each hit labeled with the KB it came from — pass `kb` only to narrow to one you already know you want. Writes (`publish_*`/`patch_*`/`append_entry`/`retract_item`/`publish_topic`/`retract_topic`) and the single-target reads (`get`, `history`, `topic`) default to `home` — pass `kb` whenever you're working inside a different one, on every call, not just the first. Never pair `kb` with `owner` on `get` — the two are rejected together (`validation_failed`): a foreign read (a teammate's org-widened doc) is always looked up in the author's own `home` KB, so a contended doc reached via `owner` never also takes `kb`.
+- **When to pass it.** Sweeping reads (`search`/`list`/`neighbors`/`file_intents`) sweep every KB you belong to *plus* any KB linked to you (see **Linked KBs** below) by default, each hit labeled with the KB it came from — pass `kb` only to narrow to one you already know you want. Writes (`publish_*`/`patch_*`/`append_entry`/`retract_item`/`publish_topic`/`retract_topic`) and the single-target reads (`get`, `history`, `topic`) default to `home` — pass `kb` whenever you're working inside a different one, on every call, not just the first. `get`'s `owner` argument is **deprecated and ignored** — it is still accepted so older clients don't break, but it grants nothing: a teammate's org work lives in an **org KB** you are a member of (see **Org KBs** below), so a plain `get` reaches it, and a bare slug that isn't in any KB you can read is `not_found` whatever `owner` says.
 - **`ambiguous_slug`.** A bare slug (no `kb` given) to `get`/`history` that exists in more than one KB you can read — your own or linked, beyond your default KB, which always wins the tie and never counts as ambiguous — comes back as an `ambiguous_slug` error naming `candidates` (`{ kb, primitive }` pairs, drawn only from KBs the slug actually matched). Retry the *exact same call* with `kb` set to the candidate you mean, copying its `kb` value exactly (a linked candidate's is qualified — see **Linked KBs** below). Never guess which one by picking the first candidate, by title, or by recency — the error exists precisely because that guess is unsafe.
-- **`reserved_kb_slug`.** Not a tool-call error — creating a custom KB (the `/kb` UI's create flow; there is no MCP tool for it) rejects a requested slug that collides with a fixed route (`home`, `memory`, `doc`, `entry`, `graph`, `linked`) with this code. If you're ever asked to help name a new KB, steer clear of those six.
+- **`reserved_kb_slug`.** Not a tool-call error — creating a KB, custom or org (the `/kb` UI's create flow and the org KBs panel at `/settings/org`; there is no MCP tool for either), rejects a requested slug that collides with a fixed route (`home`, `memory`, `doc`, `entry`, `graph`, `linked`) with this code. If you're ever asked to help name a new KB, steer clear of those six.
 
 ### Linked KBs (`login/kb-slug`)
 
@@ -121,20 +121,23 @@ and unlinking all happen in the web UI (the `/kb` invites inbox and `/kb/<kb>/se
 is **no MCP tool for inviting or linking**, and no tool that lists who is linked to you. Don't
 try to arrange one over MCP; ask the user.
 
-- **A linked hit labels itself qualified.** Your own hits carry a bare `kb: <slug>`; a hit from a
-  linked KB carries `kb: <login>/<kb-slug>` instead. **Pass that label back verbatim** as the `kb`
-  argument on any follow-up call — `get`, `history`, `neighbors`, a narrowed `search`. Never strip
-  the `login/` prefix and retype the bare slug: a bare slug means a KB you *belong to*, and since
-  every user has one slugged `home`, the bare retry usually resolves somewhere real and wrong
-  rather than failing loudly. (`file_intents` is the one exception to the label rule: its linked
-  hits carry no `kb` at all — they're identified by `owner: {login}` plus a
-  `/kb/linked/<login>/<kb-slug>/...` url, and that url's `<login>/<kb-slug>` is what you pass as
-  `kb` to follow one up.)
+- **Anything you don't own labels itself qualified.** The split is ownership, not access tier:
+  hits from a KB *you own* carry a bare `kb: <slug>`, and every other hit — a linked KB, a KB
+  someone invited you into, an org KB — carries `kb: <login>/<kb-slug>` instead.
+  **Pass that label back verbatim** as the `kb` argument on any follow-up call — `get`, `history`,
+  `neighbors`, a narrowed `search`; the qualified form addresses all three, on reads and (where
+  you have write access) writes. Never strip the `login/` prefix and retype the bare slug: a bare
+  slug prefers a KB you *own*, and since every user has one slugged `home`, the bare retry usually
+  resolves somewhere real and wrong rather than failing loudly.
+  (`file_intents` is the one exception to the label rule: its linked hits carry no `kb` at all —
+  they're identified by `owner: {login}` plus a `/kb/linked/<login>/<kb-slug>/...` url, and that
+  url's `<login>/<kb-slug>` is what you pass as `kb` to follow one up.)
 - **Two KBs you belong to can share a slug.** Slugs are unique per owner, not globally, and a
-  *member* invite can seat you into someone else's KB alongside your own same-named one (`home`
-  especially). A bare `kb` then picks one of them for you rather than erroring. When it matters
-  which, don't infer it from a hit — ask the user, or work from the KB list in the web UI, which
-  shows each one's owner.
+  *member* invite — or an org KB — can put someone else's KB alongside your own same-named one
+  (`home` especially). A bare `kb` resolves **own-first**: your own wins the tie silently, and if
+  *neither* is yours it resolves to nothing rather than picking. Either way the qualified label is
+  the unambiguous address — use it whenever it matters which one you mean, rather than inferring
+  from a hit.
 - **Never guess across ambiguity.** A bare slug matching no KB of your own but two or more linked
   KBs resolves to nothing — the same masked `not_found` an unknown KB gets, not a pick. When
   `ambiguous_slug` comes back, its `candidates` already carry the qualified `kb` values: retry
@@ -144,6 +147,33 @@ try to arrange one over MCP; ask the user.
   and no argument makes it so. Nor does a link ever widen to a KB's own linked set. If something
   you expected isn't in the sweep, that's the boundary working — say so and ask for a link rather
   than hunting for a targeting trick.
+
+### Org KBs (`org-login/kb-slug`)
+
+A KB can belong to a gitian **org** rather than a person. It behaves like any other KB you're a
+member of — swept by default, readable *and writable*, addressed by the same two `kb` forms —
+with one thing that has no analogue elsewhere: **membership is derived, never granted.** Everyone
+holding a seat in the org (while the org's subscription is live) is a member from the moment the
+KB exists; there is no invite to accept and nothing to revoke. If a seat or the subscription goes
+away, the KB simply stops appearing, on the very next call.
+
+- **Team work belongs in the org KB.** This is the practical rule. A doc you publish into your
+  own `home` KB about an org repo is **invisible to your teammates** — nothing widens across
+  personal KBs. Publish shared plans, specs and designs with `kb` set to the org KB; keep
+  personal notes in `home`. The server nudges you when you get this wrong: an `org_kb_available`
+  warning fires on a `home` **`publish_doc` or `patch_doc`** whose `repo` belongs to an org whose
+  KB you're in, naming the KB to re-publish into. It is advisory — the doc stayed in `home`, and
+  re-publishing is your call. Memories and journal entries never carry it: an org KB is writable
+  by every seated member, so "move it there" is guidance for a shared doc, not a personal note.
+- **Its label is always qualified.** An org KB is never "yours" in the labeling sense, so reads
+  label its hits `org-login/kb-slug`. Pass that back verbatim, same as a linked KB's label. The
+  bare slug works too while it's unambiguous, but if it collides with one of your own KBs, yours
+  wins and the qualified form is the org KB's address — on reads **and** writes.
+- **`get`'s `owner` argument is dead.** It used to reach a teammate's doc in their personal KB
+  under an org-derived grant. There is no such grant now: read the org KB.
+- **Membership is not something you can arrange.** Seats live in the org's own settings on the
+  web, not over MCP. If a KB you expected isn't in your sweep, say so — don't hunt for a
+  targeting trick.
 
 ## Staying in sync mid-session (`vocab_rev`)
 
@@ -250,7 +280,7 @@ never move it). Quote those to confirm a write landed intact — never assert a 
 - Slugs share one namespace per KB across all three primitives — a `memory` and a `doc` can't reuse the same slug. Pick something specific enough not to collide, and `search` first so you don't collide silently.
 - An identical re-publish returns `unchanged: true`. That is success, not an error — don't retry it or treat it as a failure.
 - **Populate frontmatter — don't default to null.** `project`, `repo`, and `tags` must be filled whenever they're derivable, not left null out of habit. The SessionStart hook context (repo, branch, date) gives you what you need for `repo` at the top of the session; set `project` from the obvious repo/workspace name. Explicit `null` is only for work that's genuinely not project- or repo-bound — never a shortcut. Always include `summary`, especially on memories, where it's the only preview a list view shows.
-- `warnings` on a successful publish are advice to act on, not blockers. Eighteen codes:
+- `warnings` on a successful publish are advice to act on, not blockers. Nineteen codes:
   - `no_tags` — no tags supplied; add 1-3 to aid retrieval
   - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
   - `no_repo` — `repo` is null; derive it from `git remote get-url origin` (the SessionStart hook already surfaces this) or confirm the work isn't repo-bound
@@ -263,6 +293,7 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   - `unknown_category` — `category` isn't a live category slug; stored but inert until it's minted (`/kb` UI) or fixed
   - `links_update_failed` — the topic/item-link index itself failed to write (distinct from an unknown slug); re-publish (even unchanged) to repair
   - `intents_update_failed` — the file-intents index failed to write; re-publish (even unchanged) to repair
+  - `org_kb_available` — (`publish_doc`/`patch_doc` only) this doc is in your `home` KB, but its `repo` belongs to a gitian **org whose KB you're already a member of**. Personal-KB docs about an org repo are invisible to teammates (see **Org KBs** under **Targeting a KB** above). Nothing was rerouted — the doc is in `home`. If this is team work, re-publish it with `kb` set to the org KB named in the note; if it's genuinely personal, ignore the warning
   - `consider_update` — a rev-1 doc mint shares primary topics with an existing active doc; check whether you should be updating that doc instead — see **Topics & categories**
   - `no_topics` — `topics` is empty on a doc/memory publish (entries are exempt); link 1-3 existing topics (see `gitian-kb://vocab`) or mint a genuine new concept
   - `doc_without_topics` — a `publish_doc` landed with no `topics`/`mentions` at all and the owner isn't on server-side extraction; apply the **Topic extraction contract** above and re-publish
@@ -270,8 +301,7 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   - `undescribed_topics_minted` — the subset of this publish's `organic_topics_minted` slugs whose topic still has no description; call `publish_topic` on each now while the context is fresh
   - `body_shrank` — the body you sent is more than 10% shorter than the stored one. Treat this as a truncation alarm, not a formality: compare `body_hash` in the response against what you expected, and if you didn't mean to cut the body, re-read the head revision and republish it in full. Past 25% (and more than 2000 characters) the publish is **rejected** outright with a `body_shrank` error instead — acknowledge a deliberate rewrite with `body_replaced: true`, or avoid the whole problem by using `patch_doc`/`patch_memory`, which never send a body at all
 - On `validation_failed`, fix every listed `issue` and retry — the error's `format_resource` field names the exact guide to re-read.
-- `contention` on a successful `publish_doc` means another active doc declares overlapping `files` — read it (`get`), coordinate or narrow scope, and cross-link it in `related`. If the hit carries a non-null `owner` (a teammate's plan on a shared org repo, not your own), pass that login as `get`'s `owner` param — a bare `get slug` looks up *your own* item at that slug (or `not_found`), not theirs. `file_intents` hits carry the same `owner` field for the same reason.
-- **Org-wide visibility** is read-time and repo-scoped: when a repo belongs to a gitian org you're seated + entitled in, `file_intents`/`contention` widen from your own rows to every currently-seated member's rows on that repo, and `get` with `owner` can read a teammate's doc under the grant its frontmatter declares (`repo` + `files`) — nothing here is a separate opt-in or a different tool.
+- `contention` on a successful `publish_doc` means another active doc declares overlapping `files` — read it (`get`), coordinate or narrow scope, and cross-link it in `related`. Contention is scanned within the KB you published into: teammates contend with each other because they publish into the same **org KB**, not because a read reached across owners.
 - `body` is distilled content — decisions made, the rationale behind them, alternatives considered and rejected — not a transcript of the conversation or a chronological log of messages. Write what a future reader needs to understand and trust the outcome.
 - Set `repo` to the working repository as `owner/name` (derive it from `git remote get-url origin`); explicit `null` when the work isn't repo-bound or there's no remote — never guess. The repo doesn't need to be connected to gitian; identity is late-binding.
 
