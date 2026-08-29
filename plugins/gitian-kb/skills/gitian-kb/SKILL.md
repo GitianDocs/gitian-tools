@@ -101,11 +101,49 @@ Read `gitian-kb://vocab` (see **Topics & categories** below) plus the matching f
 
 ## Targeting a KB (`kb`)
 
-Every tool takes an optional `kb` (a KB slug) alongside its other arguments — you can belong to more than one (your `home` KB plus any custom ones you're a member of). Most sessions never need to set it: a write with no `kb` lands in `home`, and a bare slug on a single-target read (`get`/`history`) falls through to the rest of your KBs only if it isn't found in the default. Pass `kb` explicitly whenever the work belongs to a KB other than `home` — don't assume a `kb` you passed on one call carries forward to the next; every call is independent.
+Every tool takes an optional `kb` alongside its other arguments — you can belong to more than one KB (your `home` KB plus any custom ones you're a member of), and others can be linked to you read-only. Two forms are accepted: a bare slug for a KB of your own, or a qualified `login/kb-slug` for one linked to you (see **Linked KBs** below). Most sessions never need to set it: a write with no `kb` lands in `home`, and a bare slug on a single-target read (`get`/`history`) falls through to the rest of your KBs only if it isn't found in the default. Pass `kb` explicitly whenever the work belongs to a KB other than `home` — don't assume a `kb` you passed on one call carries forward to the next; every call is independent.
 
-- **When to pass it.** Sweeping reads (`search`/`list`/`neighbors`/`file_intents`) sweep every KB you belong to by default, each hit labeled `kb: <slug>` — pass `kb` only to narrow to one you already know you want. Writes (`publish_*`/`patch_*`/`append_entry`/`retract_item`/`publish_topic`/`retract_topic`) and the single-target reads (`get`, `history`, `topic`) default to `home` — pass `kb` whenever you're working inside a different one, on every call, not just the first. Never pair `kb` with `owner` on `get` — the two are rejected together (`validation_failed`): a foreign read (a teammate's org-widened doc) is always looked up in the author's own `home` KB, so a contended doc reached via `owner` never also takes `kb`.
-- **`ambiguous_slug`.** A bare slug (no `kb` given) to `get`/`history` that exists in more than one of your KBs — beyond your default KB, which always wins the tie and never counts as ambiguous — comes back as an `ambiguous_slug` error naming `candidates` (`{ kb, primitive }` pairs, drawn only from KBs the slug actually matched). Retry the *exact same call* with `kb` set to the candidate you mean. Never guess which one by picking the first candidate, by title, or by recency — the error exists precisely because that guess is unsafe.
-- **`reserved_kb_slug`.** Not a tool-call error — creating a custom KB (the `/kb` UI's create flow; there is no MCP tool for it in phase 1) rejects a requested slug that collides with a fixed route (`home`, `memory`, `doc`, `entry`, `graph`) with this code. If you're ever asked to help name a new KB, steer clear of those five.
+- **When to pass it.** Sweeping reads (`search`/`list`/`neighbors`/`file_intents`) sweep every KB you belong to *plus* any KB linked to you (see **Linked KBs** below) by default, each hit labeled with the KB it came from — pass `kb` only to narrow to one you already know you want. Writes (`publish_*`/`patch_*`/`append_entry`/`retract_item`/`publish_topic`/`retract_topic`) and the single-target reads (`get`, `history`, `topic`) default to `home` — pass `kb` whenever you're working inside a different one, on every call, not just the first. Never pair `kb` with `owner` on `get` — the two are rejected together (`validation_failed`): a foreign read (a teammate's org-widened doc) is always looked up in the author's own `home` KB, so a contended doc reached via `owner` never also takes `kb`.
+- **`ambiguous_slug`.** A bare slug (no `kb` given) to `get`/`history` that exists in more than one KB you can read — your own or linked, beyond your default KB, which always wins the tie and never counts as ambiguous — comes back as an `ambiguous_slug` error naming `candidates` (`{ kb, primitive }` pairs, drawn only from KBs the slug actually matched). Retry the *exact same call* with `kb` set to the candidate you mean, copying its `kb` value exactly (a linked candidate's is qualified — see **Linked KBs** below). Never guess which one by picking the first candidate, by title, or by recency — the error exists precisely because that guess is unsafe.
+- **`reserved_kb_slug`.** Not a tool-call error — creating a custom KB (the `/kb` UI's create flow; there is no MCP tool for it) rejects a requested slug that collides with a fixed route (`home`, `memory`, `doc`, `entry`, `graph`, `linked`) with this code. If you're ever asked to help name a new KB, steer clear of those six.
+
+### Linked KBs (`login/kb-slug`)
+
+Someone else's KB can be *linked* to one of yours — a **read-only**, **one hop**, **mutual**
+grant the two sides agree to through an invite. Once it's accepted, that KB's items show up in
+your sweeping reads alongside your own — *and yours show up in theirs*. A link is not a one-way
+"I get to read them": accepting exposes the whole KB you accept into, which is why accepting a
+link invite needs the `admin` role on that KB, the same role needed to send one. If a user asks
+you whether to accept, say that plainly — the exposure is the decision. Nothing about writing
+changes either way: `publish_*`, `patch_*`, `append_entry`, `retract_item`, `publish_topic` and
+`retract_topic` can only ever land in a KB you're a member of. Inviting, accepting, declining,
+and unlinking all happen in the web UI (the `/kb` invites inbox and `/kb/<kb>/settings`) — there
+is **no MCP tool for inviting or linking**, and no tool that lists who is linked to you. Don't
+try to arrange one over MCP; ask the user.
+
+- **A linked hit labels itself qualified.** Your own hits carry a bare `kb: <slug>`; a hit from a
+  linked KB carries `kb: <login>/<kb-slug>` instead. **Pass that label back verbatim** as the `kb`
+  argument on any follow-up call — `get`, `history`, `neighbors`, a narrowed `search`. Never strip
+  the `login/` prefix and retype the bare slug: a bare slug means a KB you *belong to*, and since
+  every user has one slugged `home`, the bare retry usually resolves somewhere real and wrong
+  rather than failing loudly. (`file_intents` is the one exception to the label rule: its linked
+  hits carry no `kb` at all — they're identified by `owner: {login}` plus a
+  `/kb/linked/<login>/<kb-slug>/...` url, and that url's `<login>/<kb-slug>` is what you pass as
+  `kb` to follow one up.)
+- **Two KBs you belong to can share a slug.** Slugs are unique per owner, not globally, and a
+  *member* invite can seat you into someone else's KB alongside your own same-named one (`home`
+  especially). A bare `kb` then picks one of them for you rather than erroring. When it matters
+  which, don't infer it from a hit — ask the user, or work from the KB list in the web UI, which
+  shows each one's owner.
+- **Never guess across ambiguity.** A bare slug matching no KB of your own but two or more linked
+  KBs resolves to nothing — the same masked `not_found` an unknown KB gets, not a pick. When
+  `ambiguous_slug` comes back, its `candidates` already carry the qualified `kb` values: retry
+  with the one you mean, copied exactly. Choosing by order, title, or recency is precisely the
+  guess these errors exist to prevent.
+- **One hop, never transitive.** A KB linked to a KB that's linked to yours is not yours to read,
+  and no argument makes it so. Nor does a link ever widen to a KB's own linked set. If something
+  you expected isn't in the sweep, that's the boundary working — say so and ask for a link rather
+  than hunting for a targeting trick.
 
 ## Staying in sync mid-session (`vocab_rev`)
 
@@ -239,7 +277,7 @@ never move it). Quote those to confirm a write landed intact — never assert a 
 
 ## Writing bodies
 
-Bodies are Obsidian-flavored intent documentation — why the thing is the way it is, not a transcript. Link related KB items inline with `[[slug]]` wikilinks (they resolve in the UI and add a direct, always-1.0 relatedness link between the two items — stronger than any topic overlap), structure with headings, and include short code snippets where they say it better than prose. Reference code where the knowledge lives: in a repo already instrumented with gitian docs (a `.gitian/` config directory, `@gitian` annotations, paired `docs/` files), point at those anchors — an annotation id, a doc path — instead of duplicating their content; in any other repo, reference files and symbols plainly. **Never add `@gitian` annotations or any gitian markup to a codebase that isn't already using the gitian docs system** — publishing to the KB never licenses editing code comments; in-code instrumentation is opt-in via the gitian-docs plugin only.
+Bodies are Obsidian-flavored intent documentation — why the thing is the way it is, not a transcript. Link related KB items inline with `[[slug]]` wikilinks (they resolve in the UI and add a direct, always-1.0 relatedness link between the two items — stronger than any topic overlap), structure with headings, and include short code snippets where they say it better than prose. A wikilink can also cross KBs: `[[kb-slug/item-slug]]` is resolved relative to the reader (your own KB of that name wins; ambiguous across two linked KBs renders as a dangling link rather than a guess) and `[[login/kb-slug/item-slug]]` names a linked KB's item exactly — prefer the qualified three-segment form when you're writing about a linked KB's item, for the same reason you pass a qualified `kb` back verbatim. Reference code where the knowledge lives: in a repo already instrumented with gitian docs (a `.gitian/` config directory, `@gitian` annotations, paired `docs/` files), point at those anchors — an annotation id, a doc path — instead of duplicating their content; in any other repo, reference files and symbols plainly. **Never add `@gitian` annotations or any gitian markup to a codebase that isn't already using the gitian docs system** — publishing to the KB never licenses editing code comments; in-code instrumentation is opt-in via the gitian-docs plugin only.
 
 ## Terminal-state discipline
 

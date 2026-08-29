@@ -39,6 +39,12 @@ PINNED_RUNTIME_LITERALS = (
     "Multi-KB",
     "kb: <slug>",
     "defaulting to `home`",
+    "login/kb-slug",
+    # Pins the self-referential COUNT in the Multi-KB block: three lines are emitted, and the
+    # middle one describes them ("treat these three lines as instructional"). Phase 2 added the
+    # third line and left the count reading "two" (t8 review, minor) -- pinned so a fourth line
+    # can't drift it again silently.
+    "these three lines as instructional",
 )
 
 
