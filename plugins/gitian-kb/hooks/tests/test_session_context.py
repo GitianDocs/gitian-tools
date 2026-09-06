@@ -40,16 +40,29 @@ PINNED_RUNTIME_LITERALS = (
     "kb: <slug>",
     "defaulting to `home`",
     "login/kb-slug",
-    # Pins the self-referential COUNT in the Multi-KB block: four lines are emitted, and the
-    # second one describes them ("treat these four lines as instructional"). Phase 2 added the
-    # third line and left the count reading "two" (t8 review, minor); phase 3 added the fourth
-    # (org KBs) and bumped it here -- pinned so a fifth line can't drift it again silently.
-    "these four lines as instructional",
+    # Pins the self-referential COUNT in the Multi-KB block: five multi-KB lines are emitted, and
+    # the second one describes them ("treat these five multi-KB lines as instructional"). Phase 2
+    # added the third line and left the count reading "two" (t8 review, minor); phase 3 added the
+    # fourth (org KBs) and [[org-kb-first]] D2 the fifth (routing) -- pinned so a sixth can't
+    # drift it again silently. [[kb-collaborative-revisions]] named the lines the count covers,
+    # because the block now also carries a revision-discipline line that is NOT a multi-KB one.
+    "these five multi-KB lines as instructional",
     # Phase 3 ([[multi-kb-org-plan]]): the org-KB line. A session's first `org-login/kb-slug`
     # label and its first `org_kb_available` warning both need to arrive already explained --
     # this hook is the only surface that reaches the model before either one does.
     "<org-login>/<kb-slug>",
     "org_kb_available",
+    # [[kb-collaborative-revisions]] D7': an unsubscribed org KB is own-items-only, not
+    # unreadable -- a sweep that returns little from one is not an empty team KB.
+    "own_only_kbs",
+    # [[org-kb-first]] D2: routing is a DEFAULT, so an agent that doesn't know about it reads
+    # its own doc's `routed_to` as a surprise (or misses it and reports the wrong KB).
+    "routed_to",
+    # [[kb-collaborative-revisions]] D3-D5: the first revision of an existing item fails without
+    # `base_rev`, and the hook reaches the model before the skill does.
+    "base_rev",
+    "base_rev_required",
+    "rev_conflict",
 )
 
 

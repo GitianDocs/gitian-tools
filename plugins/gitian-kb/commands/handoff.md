@@ -15,6 +15,9 @@ skill. Read `gitian-kb://format/doc` first if you haven't this session. Then `pu
 decisions in flight (and why), what's verified versus assumed, next steps, and blockers. Write it
 so a fresh agent with no other context could resume the work from the doc alone.
 
-If a governing doc for this thread already exists, re-publish that slug with the handoff state
-folded in (status, next_steps, blockers) instead of minting a duplicate. Surface the returned
-`url` to the user, then tell them it's safe to `/compact` or step away.
+If a governing doc for this thread already exists, `get` it and re-publish that slug with the
+handoff state folded in — with `base_rev` set to the rev you just read, or the write is refused
+with `base_rev_required` — instead of minting a duplicate. Prefer `patch_doc` for the fields that
+actually move (status, next_steps, blockers): it carries no body, so nothing can be truncated on
+the way. Surface the returned `url` to the user, then tell them it's safe to `/compact` or step
+away.
