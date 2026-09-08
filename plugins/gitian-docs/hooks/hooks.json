@@ -1,9 +1,21 @@
 {
-  "description": "gitian-docs: PostToolUse nudge to keep @gitian annotations and paired docs/ files in sync after code edits.",
+  "description": "gitian-docs: a SessionStart cue plus a PostToolUse nudge, both scoped to gitian-instrumented repos, that keep @gitian annotations and paired docs/ files in sync as code changes.",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/docs-context.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
         "hooks": [
           {
             "type": "command",
