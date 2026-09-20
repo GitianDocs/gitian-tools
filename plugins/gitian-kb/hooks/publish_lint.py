@@ -3,9 +3,11 @@
 
 Invoked as a single python3 process (stdin passed straight through, unread by publish-lint.sh) by
 publish-lint.sh, itself registered as a PreToolUse hook matching
-"mcp__.*(publish_doc|publish_memory|publish_entry|append_entry)". Advisory only: it never blocks
-a call outright -- an identical re-send always passes untouched (pinned decision 5) -- it just
-nudges toward better vocabulary hygiene before a topic/mention list is committed to the KB.
+"mcp__.*(publish_doc|publish_memory|publish_entry|append_entry|patch_doc|patch_memory)" -- the
+patch tools included, since a patch revises an item's frontmatter and its topic/mention lists are
+exactly what this lint is about. Advisory only: it never blocks a call outright -- an identical
+re-send always passes untouched (pinned decision 5) -- it just nudges toward better vocabulary
+hygiene before a topic/mention list is committed to the KB.
 
 Guard: tool_name must contain "gitian" (matches the harvest.py convention); anything else is
 silent. The matcher above is only a coarse pre-filter -- this guard is the real gate.
@@ -160,7 +162,8 @@ def _check_empty_topics(tool_name, tool_input, cached_topics):
     if not cached_topics:
         return (
             "no topics linked, and the cached vocabulary is empty -- read `gitian-kb://vocab` "
-            "and link 1-3 topics before publishing"
+            "(via the resource, or the `read_resource` tool when your client cannot read MCP "
+            "resources) and link 1-3 topics before publishing"
         )
 
     ranked = sorted(cached_topics, key=_degree, reverse=True)[:MAX_CANDIDATES]

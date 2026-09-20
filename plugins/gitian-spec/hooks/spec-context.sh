@@ -1,11 +1,11 @@
 #!/bin/sh
 # spec-context.sh -- SessionStart hook for the gitian-spec plugin.
 #
-# gitian-kb's own SessionStart hook already injects repo/branch/date context plus the RAG
-# discipline, so this hook deliberately duplicates NONE of that (no git calls at all). It emits:
+# gitian-kb's own SessionStart hook already injects repo/branch/date context plus the delegation
+# directive, so this hook deliberately duplicates NONE of that (no git calls at all). It emits:
 #   - one spec-routing line: long-form work docs (specs, plans, designs, brainstorms, handoffs,
-#     session notes) are KB deliverables -- publish_doc/publish_entry per the gitian-spec skill,
-#     never loose markdown files
+#     session notes) are KB deliverables -- scanned, then briefed to the kb-scribe subagent per
+#     the gitian-spec skill, never loose markdown files
 #   - a companion warning ONLY when the gitian-kb plugin is missing from
 #     installed_plugins.json -- gitian-spec ships no MCP config of its own (single-connection
 #     design), so without gitian-kb there are no gitian tools to publish with
@@ -16,7 +16,7 @@ set -u
 # Swallow stdin (hook input JSON) so the pipe never blocks; nothing in it is needed here.
 cat >/dev/null 2>&1 || true
 
-context="gitian-spec: specs, plans, designs, brainstorms, handoffs, and session notes are KB deliverables -- author them via publish_doc/publish_entry per the gitian-spec skill, never as loose markdown files."
+context="gitian-spec: specs, plans, designs, brainstorms, handoffs, and session notes are KB deliverables -- scan the KB, then brief the kb-scribe subagent (pass the session transcript) to author and publish the doc per the gitian-spec skill, never a loose markdown file."
 
 # Companion detection: any marketplace's gitian-kb install counts. When the registry file is
 # missing or unreadable we cannot tell, so stay quiet rather than warn wrongly.

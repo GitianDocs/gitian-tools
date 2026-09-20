@@ -517,7 +517,7 @@ class EveryNudgeFiresOnceThenRearmsOnEpochBump(InvariantTestCase):
         commit_payload = commit_envelope("git commit -m 'wip'", session_id=sid)
         first_commit = self.run_hook(COMMIT_NUDGE_SH, commit_payload)
         commit_context = self.assert_post_tool_context(first_commit)
-        self.assertIn("append_entry", commit_context)
+        self.assertIn("kb-scribe", commit_context)
 
         second_commit = self.run_hook(COMMIT_NUDGE_SH, commit_payload)
         self.assert_silent(second_commit)
@@ -536,13 +536,24 @@ class EveryNudgeFiresOnceThenRearmsOnEpochBump(InvariantTestCase):
         self.assert_silent(second_mint)
 
         # -- Stop publish reminder: 3 edits, 0 publishes -> block once, repeat silent ------------
+        # Its own sid: the mint-follow-up leg above harvested a SUCCESSFUL publish_doc under
+        # `sid`, so that session genuinely has `publishes: 1` and the reminder is right to stay
+        # quiet there ([[kb-scribe-delegation]] made the harvested counter a suppression source,
+        # which is what lets a background scribe's publish silence this nudge at all).
+        stop_sid = "sess-rearm-stop"
         transcript = self.write_transcript([edit_line(), edit_line(), edit_line()])
-        stop_payload = stop_envelope(transcript, session_id=sid)
+        stop_payload = stop_envelope(transcript, session_id=stop_sid)
         first_stop = self.run_hook(PUBLISH_REMINDER_SH, stop_payload)
         self.assert_block(first_stop)
 
         second_stop = self.run_hook(PUBLISH_REMINDER_SH, stop_payload)
         self.assert_silent(second_stop)
+
+        # The epoch bump zeroes the counters as well as the flags, so the reminder re-arms for a
+        # session whose only publish evidence was the counter.
+        self.bump_epoch(sid)
+        rearmed_stop = self.run_hook(PUBLISH_REMINDER_SH, stop_envelope(transcript, session_id=sid))
+        self.assert_block(rearmed_stop)
 
         # -- epoch bump (simulating `clear`) re-arms the once-per-epoch nudges -------------------
         self.bump_epoch(sid)

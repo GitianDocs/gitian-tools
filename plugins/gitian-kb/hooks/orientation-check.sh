@@ -4,9 +4,10 @@
 # Registered (see hooks.json, owned by T12) on matcher "Edit|Write|NotebookEdit". Guards against
 # a session's first file mutation happening before any gitian KB read: if this session has zero
 # gitianReads recorded and the "orientation" flag hasn't fired yet, deny-once with an advisory
-# reason pointing at file_intents/search/neighbors -- in-flight plans elsewhere may already claim
-# the paths about to be touched. A session that has done even one gitian read never sees this,
-# from the very first mutation onward.
+# reason pointing at a kb-librarian dispatch (file_intents/search/neighbors) -- in-flight plans
+# elsewhere may already claim the paths about to be touched. A session that has done even one
+# gitian read never sees this, from the very first mutation onward -- and a BACKGROUND librarian's
+# reads count, since harvest.py records a subagent's MCP traffic under the parent's session id.
 #
 # Fail-open on every path: bad/garbage/empty stdin, a missing session_id, a missing lib-state.sh,
 # or any state-substrate failure (corrupt/unwritable state file, missing python3) all fall through
@@ -78,7 +79,7 @@ if [ "$reads" = "0" ]; then
       intents_clause="\`file_intents\`"
     fi
 
-    reason="gitian-kb orientation: this is your first file mutation this session with zero gitian KB reads so far. In-flight plans elsewhere may already claim these paths -- consider ${intents_clause} plus \`search\`/\`neighbors\` for the task topic before continuing. This is advisory: re-sending the identical call will pass through untouched. Fires once per session."
+    reason="gitian-kb orientation: this is your first file mutation this session with zero gitian KB reads so far. In-flight plans elsewhere may already claim these paths -- dispatch \`kb-librarian\` (background) for an orientation digest: ${intents_clause} plus \`search\`/\`neighbors\` for the task topic. This is advisory: re-sending the identical call will pass through untouched. Fires once per session."
 
     # JSON-escape the dynamic reason before interpolating into the literal template below.
     reason_escaped="$(printf '%s' "$reason" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"

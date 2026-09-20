@@ -96,7 +96,10 @@ class CommitNudgeTestCase(unittest.TestCase):
         payload = json.loads(proc.stdout)
         out = payload["hookSpecificOutput"]
         self.assertEqual(out["hookEventName"], "PostToolUse")
-        self.assertIn("append_entry", out["additionalContext"])
+        # [[kb-scribe-delegation]]: the nudge names the AGENT to brief, not the write tool to
+        # call -- the primary doesn't append to the journal itself any more.
+        self.assertIn("kb-scribe", out["additionalContext"])
+        self.assertIn("journal", out["additionalContext"])
         return out
 
 

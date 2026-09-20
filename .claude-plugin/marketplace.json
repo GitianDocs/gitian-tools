@@ -7,7 +7,7 @@
     {
       "name": "gitian-kb",
       "source": "./plugins/gitian-kb",
-      "description": "Publish distilled knowledge (memories, docs, journal entries) to your gitian Knowledge Base via MCP, with the discipline for when and how."
+      "description": "Publish distilled knowledge (memories, docs, journal entries) to your gitian Knowledge Base via MCP, with the discipline for when and how — plus two subagents: kb-librarian reads, kb-scribe writes from your brief."
     },
     {
       "name": "gitian-docs",

@@ -4,7 +4,15 @@
 Invoked by publish-reminder.sh (stdin passed straight through, unread by the wrapper) on every
 Stop event. Streams the turn's transcript looking for a session that has edited files or made a
 commit without ever publishing to the gitian KB, and -- once per session -- blocks with an
-advisory reminder to record the work if it clears the gitian-kb skill's meaningful-event bar.
+advisory reminder to brief kb-scribe if the work clears the gitian-kb skill's meaningful-event
+bar.
+
+"Without ever publishing" is answered from TWO sources, because under [[kb-scribe-delegation]]
+the publish normally happens somewhere this hook cannot see: a background kb-scribe writes from
+its own sidechain transcript, a separate file. So the transcript scan below is joined by
+`_recorded_publishes`, the `sessions.<sid>.publishes` counter harvest.py maintains -- a subagent's
+MCP traffic fires the PostToolUse harvest under the PARENT's session id, which is what makes the
+scribe's work visible here at all.
 
 Fail-open, always: the loop guard (stop_hook_active) is checked first and unconditionally; a
 missing/unreadable transcript, corrupt state, or any other error anywhere below is swallowed by
@@ -25,7 +33,17 @@ import commit_nudge as commit_nudge_mod
 import state as state_mod
 
 EDIT_TOOL_NAMES = ("Edit", "Write", "NotebookEdit")
-PUBLISH_MARKERS = ("publish_doc", "publish_memory", "publish_entry", "publish_topic", "append_entry")
+# Mirrors harvest.py's own PUBLISH_MARKERS, patch tools included: a revision records the work as
+# surely as a create does, and patch_doc/body_edits is kb-scribe's normal revision path.
+PUBLISH_MARKERS = (
+    "publish_doc",
+    "publish_memory",
+    "publish_entry",
+    "publish_topic",
+    "append_entry",
+    "patch_doc",
+    "patch_memory",
+)
 FLAG_NAME = "publish_reminder"
 
 # Pinned decision 4: publishes == 0 AND (edits >= EDIT_THRESHOLD OR commits >= COMMIT_THRESHOLD).
@@ -114,6 +132,30 @@ def _scan_transcript(path):
     return edits, commits, publishes
 
 
+def _recorded_publishes(state, sid):
+    """sessions.<sid>.publishes as harvested by harvest.py -- the ONLY evidence a background
+    kb-scribe's publish leaves in reach of this hook. The scribe writes from its own sidechain
+    transcript, a SEPARATE file, so `_scan_transcript` below cannot see it; the PostToolUse
+    harvest fires with the parent's session_id and counts it here instead. Epoch-scoped like the
+    flag (a /clear bump zeroes it). Fully defensive: any odd shape reads as 0.
+
+    This short-circuit is exactly why harvest.py counts a write ONLY on a decoded success envelope
+    (see its `_publish_outcome`): one `rev_conflict`/`edit_no_match`/`base_rev_required`
+    miscounted as a publish would silence this reminder for the whole epoch, in precisely the case
+    where the work never reached the KB and the reminder matters most. A no-op republish
+    (`unchanged: true`) does not count there either."""
+    sessions = state.get("sessions")
+    if not isinstance(sessions, dict):
+        return 0
+    session = sessions.get(sid)
+    if not isinstance(session, dict):
+        return 0
+    value = session.get("publishes")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value if value > 0 else 0
+
+
 def _flag_already_set(state, sid, flag):
     """Peek sessions.<sid>.flags.<flag> WITHOUT consuming it -- fully defensive, never raises,
     so an oddly-shaped (corrupt) session/flags value just reads as "not set" rather than crashing
@@ -169,9 +211,9 @@ def _build_reason(edits, commits):
     activity = " and ".join(parts) if parts else "activity"
     return (
         "%s this session with nothing published to the gitian KB. If any of it clears the "
-        "meaningful-event bar (see the gitian-kb skill's trigger table), record it now -- "
-        "append_entry for the journal, or update the governing doc. If nothing qualifies, finish "
-        "normally: this reminder fires once per session." % activity
+        "meaningful-event bar (see the gitian-kb skill's trigger table), brief kb-scribe now "
+        "(background) with what happened, the decisions and why -- it authors and publishes. "
+        "If nothing qualifies, finish normally: this reminder fires once per session." % activity
     )
 
 
@@ -186,10 +228,13 @@ def main():
     if not isinstance(sid, str) or not sid:
         return
 
-    # Check WITHOUT consuming: below-threshold turns must leave the flag unset so a later
-    # turn-end that crosses the bar can still fire it.
-    if _flag_already_set(state_mod.load(), sid, FLAG_NAME):
+    # ONE state read for both questions. Check the flag WITHOUT consuming it: below-threshold
+    # turns must leave it unset so a later turn-end that crosses the bar can still fire.
+    state = state_mod.load()
+    if _flag_already_set(state, sid, FLAG_NAME):
         return
+    if _recorded_publishes(state, sid) > 0:
+        return  # a scribe (or this session itself) already published -- nothing to remind about
 
     transcript_path = payload.get("transcript_path")
     if not isinstance(transcript_path, str) or not transcript_path:

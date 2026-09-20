@@ -245,7 +245,15 @@ class Reads(HarvestTestCase):
         self.assertEqual(session["publishes"], 1)
 
     def test_all_documented_read_suffixes_increment(self):
-        suffixes = ("get", "search", "list", "neighbors", "topic", "history", "file_intents")
+        suffixes = (
+            "get",
+            "search",
+            "list",
+            "neighbors",
+            "topic",
+            "history",
+            "file_intents",
+        )
         for suffix in suffixes:
             proc = self.run_harvest(
                 envelope("mcp__plugin_gitian-kb_gitian__%s" % suffix, tool_response={"ok": True})
@@ -254,6 +262,29 @@ class Reads(HarvestTestCase):
 
         state = self.dump_state()
         self.assertEqual(state["sessions"]["sess-1"]["gitianReads"], len(suffixes))
+
+    def test_read_resource_is_credited_by_uri_not_by_name(self):
+        # [[kb-scribe-delegation]]: a plugin subagent has no ReadMcpResourceTool at all, so both
+        # agents reach the vocabulary AND the static format docs through this one tool. Only the
+        # vocabulary read is KB content, so the tool name alone must not earn the credit -- the
+        # uri decides, which is what keeps a scribe's format-doc read from standing in for the
+        # orientation sweep the parent's nudge is actually asking about.
+        name = "mcp__plugin_gitian-kb_gitian__read_resource"
+        self.assert_silent(
+            self.run_harvest(
+                envelope(name, tool_input={"uri": "gitian-kb://format/doc"},
+                         tool_response={"vocab_rev": 3})
+            )
+        )
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"].get("gitianReads", 0), 0)
+
+        self.assert_silent(
+            self.run_harvest(
+                envelope(name, tool_input={"uri": "gitian-kb://vocab"},
+                         tool_response={"vocab_rev": 3})
+            )
+        )
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"]["gitianReads"], 1)
 
     def test_non_read_non_publish_gitian_call_does_not_increment_reads(self):
         proc = self.run_harvest(
@@ -399,10 +430,11 @@ class NestedMcpEnvelope(HarvestTestCase):
     """Regression for the CRITICAL nested-envelope decode fix. A REAL MCP tool response nests the
     server's actual JSON payload as an ESCAPED STRING inside a content block --
     {"content": [{"type": "text", "text": "{\\"vocab_rev\\": 19, ...}"}]} -- so the raw
-    VOCAB_REV_RE/SLUG_RE regexes (which only ever matched an unescaped '"vocab_rev"'/'"slug"')
-    never fired against real server traffic; only harvest.py's own hand-built test envelopes
-    (which put those fields directly on tool_response, unnested) ever exercised them. These tests
-    drive harvest.sh with the REALISTIC nested shape end to end."""
+    VOCAB_REV_RE regex (which only ever matched an unescaped '"vocab_rev"') never fired against
+    real server traffic; only harvest.py's own hand-built test envelopes (which put that field
+    directly on tool_response, unnested) ever exercised it. These tests drive harvest.sh with the
+    REALISTIC nested shape end to end. Publish success/failure is judged structurally rather than
+    by regex at all now -- see PublishOutcome below."""
 
     def _nested_response(self, payload, is_error=False):
         return {"content": [{"type": "text", "text": json.dumps(payload)}], "isError": is_error}
@@ -478,6 +510,366 @@ class NestedMcpEnvelope(HarvestTestCase):
         )
         self.assert_silent(proc)
         self.assertFalse(os.path.exists(self.state_file))
+
+
+class DelegatedWriteSurface(HarvestTestCase):
+    """[[kb-scribe-delegation]]: the write tools the SCRIBE actually reaches for. A subagent's
+    MCP traffic fires these hooks under the parent's session id (proved by probe), so what the
+    scribe does has to register here or the parent's Stop reminder nags about work that was
+    published minutes ago."""
+
+    def test_patch_doc_counts_as_a_publish(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__patch_doc",
+                tool_input={"slug": "some-plan", "base_rev": 7},
+                tool_response={"isError": False, "slug": "some-plan"},
+            )
+        )
+        self.assert_silent(proc)
+
+        state = self.dump_state()
+        session = state["sessions"]["sess-1"]
+        self.assertEqual(session["publishes"], 1)
+        self.assertEqual(session.get("gitianReads", 0), 0)
+        server = state["servers"][SERVER_KEY]
+        self.assertTrue(server["lastPublishAt"])
+        self.assertEqual(server["lastPublishSlug"], "some-plan")
+        # A patch is not an APPEND: the commit-nudge damper keys on lastAppendAt, and a
+        # frontmatter-only patch is not the journal entry that damper is about.
+        self.assertNotIn("lastAppendAt", server)
+
+    def test_patch_memory_counts_as_a_publish(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__patch_memory",
+                tool_response={"isError": False, "slug": "a-memory"},
+            )
+        )
+        self.assert_silent(proc)
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"]["publishes"], 1)
+
+    def test_failed_patch_harvests_nothing(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__patch_doc",
+                tool_response={"isError": True, "error": "rev_conflict"},
+            )
+        )
+        self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_read_resource_of_the_vocab_uri_seeds_the_topic_cache(self):
+        topics = [{"slug": "auth", "description": "Auth flows", "degree": 3}]
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__read_resource",
+                tool_input={"uri": "gitian-kb://vocab"},
+                tool_response={
+                    "content": [{"type": "text", "text": json.dumps({"topics": topics, "vocab_rev": 51})}]
+                },
+            )
+        )
+        self.assert_silent(proc)
+
+        state = self.dump_state()
+        server = state["servers"][SERVER_KEY]
+        self.assertEqual(server["topics"], topics)
+        self.assertEqual(server["vocabRev"], 51)
+        self.assertTrue(server["vocabFetchedAt"])
+        self.assertEqual(state["sessions"]["sess-1"]["gitianReads"], 1)
+
+    def test_read_resource_of_a_format_doc_is_not_an_orientation_read(self):
+        # A format doc is the publish-format INSTRUCTIONS -- static text, identical in every KB,
+        # exposing no KB content at all. Crediting it as a `gitianReads` would let any scribe
+        # dispatch silence the parent's orientation check with no sweep having happened, and the
+        # orientation check is precisely "has anything in this session looked at the KB yet".
+        # Parity note: on origin/main the other spelling of this read (ReadMcpResourceTool on a
+        # `gitian-kb://format/*` uri) was NOT credited either -- READ_SUFFIXES held no
+        # `read_resource` and "ReadMcpResourceTool" ends in none of its entries -- so this is
+        # closing a regression, not narrowing established behavior.
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__read_resource",
+                tool_input={"uri": "gitian-kb://format/doc"},
+                tool_response=self._resource_response(
+                    "gitian-kb://format/doc", "text/markdown", "# Doc format", vocab_rev=12
+                ),
+            )
+        )
+        self.assert_silent(proc)
+
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"].get("gitianReads", 0), 0)
+        server = state["servers"][SERVER_KEY]
+        # The envelope is still mined for everything it legitimately carries.
+        self.assertEqual(server["vocabRev"], 12)
+        self.assertNotIn("topics", server)
+
+    def _resource_response(self, uri, mime_type, text, vocab_rev=None):
+        """The REAL `read_resource` tool envelope (mcp-server.ts: `jsonResult({uri, mimeType,
+        text})`, then `stampVocabRev`). The resource's own payload is a JSON STRING nested under
+        `text` inside the content block's own JSON string -- two levels of encoding, not one,
+        which is why a reader that decodes a single level finds no `topics` key at all."""
+        payload = {"uri": uri, "mimeType": mime_type, "text": text}
+        if vocab_rev is not None:
+            payload["vocab_rev"] = vocab_rev
+        return {"content": [{"type": "text", "text": json.dumps(payload)}], "isError": False}
+
+    def test_read_resource_vocab_envelope_seeds_the_topic_cache(self):
+        # Bundle S's `read_resource` is the path a SUBAGENT must use (no ReadMcpResourceTool in a
+        # plugin subagent's registry), so this is the shape the vocab snapshot will actually
+        # arrive in from here on.
+        topics = [{"slug": "auth", "description": "Auth flows", "degree": 3}]
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__read_resource",
+                tool_input={"uri": "gitian-kb://vocab"},
+                tool_response=self._resource_response(
+                    "gitian-kb://vocab",
+                    "application/json",
+                    json.dumps({"topics": topics}),
+                    vocab_rev=77,
+                ),
+            )
+        )
+        self.assert_silent(proc)
+
+        state = self.dump_state()
+        server = state["servers"][SERVER_KEY]
+        self.assertEqual(server["topics"], topics)
+        self.assertEqual(server["vocabRev"], 77)
+        self.assertTrue(server["vocabFetchedAt"])
+        self.assertEqual(state["sessions"]["sess-1"]["gitianReads"], 1)
+
+    def test_read_resource_vocab_envelope_records_undescribed_topics(self):
+        topics = [
+            {"slug": "auth", "description": "Auth flows", "degree": 3},
+            {"slug": "stub-topic", "description": "", "degree": 1},
+        ]
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__read_resource",
+                tool_input={"uri": "gitian-kb://vocab"},
+                tool_response=self._resource_response(
+                    "gitian-kb://vocab", "application/json", json.dumps({"topics": topics})
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        server = self.dump_state()["servers"][SERVER_KEY]
+        self.assertEqual(server["undescribedTopics"], ["stub-topic"])
+
+    def test_read_resource_vocab_envelope_with_unparsable_nested_text_harvests_no_topics(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__read_resource",
+                tool_input={"uri": "gitian-kb://vocab"},
+                tool_response=self._resource_response(
+                    "gitian-kb://vocab", "application/json", "not json at all {"
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertNotIn("topics", self.dump_state().get("servers", {}).get(SERVER_KEY, {}))
+
+
+class PublishOutcome(HarvestTestCase):
+    """A failed write must never be counted as a publish. The Stop reminder short-circuits on
+    `sessions.<sid>.publishes > 0`, so one miscounted `rev_conflict` silences the nudge for the
+    whole epoch -- exactly the case where the work did NOT reach the KB and the reminder is most
+    needed. Success is therefore modelled POSITIVELY from the server's real envelopes
+    (mcp-server.ts/repository.ts): a success carries a `slug` and, on the publish/patch tails, a
+    numeric `rev`; every error is `errResult({error: "<code>", ...})`, a STRING `error`."""
+
+    def _nested(self, payload, is_error=False):
+        return {"content": [{"type": "text", "text": json.dumps(payload)}], "isError": is_error}
+
+    def _success_payload(self, slug="some-plan", rev=8, **extra):
+        """repository.ts::PublishSuccess as the wire actually carries it."""
+        payload = {
+            "slug": slug,
+            "primitive": "doc",
+            "rev": rev,
+            "url": "/kb/home/doc/%s" % slug,
+            "body_length": 1234,
+            "body_hash": "deadbeef",
+            "vocab_rev": 19,
+        }
+        payload.update(extra)
+        return payload
+
+    def test_a_real_success_envelope_counts(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                tool_response=self._nested(self._success_payload()),
+            )
+        )
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"]["publishes"], 1)
+        self.assertEqual(state["servers"][SERVER_KEY]["lastPublishSlug"], "some-plan")
+
+    def test_rev_conflict_does_not_count_as_a_publish(self):
+        # THE trap: a rev_conflict carries the item's own `slug` (repository.ts::revConflictError)
+        # and no top-level marker the old raw-substring checks looked for, so slug-or-nothing
+        # detection read it as a successful publish of that very slug.
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__patch_doc",
+                tool_input={"slug": "some-plan", "base_rev": 6},
+                tool_response=self._nested(
+                    {
+                        "error": "rev_conflict",
+                        "slug": "some-plan",
+                        "base_rev": 6,
+                        "head_rev": 8,
+                        "head": {"author": "scribe", "author_login": "arrayofone"},
+                        "frontmatter_changed": ["status"],
+                        "body_diff": "@@ -1 +1 @@",
+                        "omitted_reason": None,
+                        "message": "'some-plan' moved from rev 6 to rev 8 since you read it",
+                    },
+                    is_error=True,
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_rev_conflict_is_detected_structurally_even_without_the_transport_flag(self):
+        # Whether the harness forwards the MCP envelope's own `isError` into `tool_response` is
+        # outside this hook's control; the decoded `error` string is not.
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                tool_response=self._nested(
+                    {"error": "rev_conflict", "slug": "some-plan", "head_rev": 8}, is_error=False
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_base_rev_required_does_not_count_as_a_publish(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                tool_response=self._nested(
+                    {
+                        "error": "base_rev_required",
+                        "slug": "some-plan",
+                        "message": "'some-plan' already exists; read it and retry",
+                    },
+                    is_error=True,
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_edit_no_match_does_not_count_as_a_publish(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__patch_doc",
+                tool_response=self._nested(
+                    {"error": "edit_no_match", "slug": "some-plan", "message": "no match"},
+                    is_error=True,
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_a_no_op_republish_does_not_count_as_a_publish(self):
+        # The server reports a write that stored nothing as `unchanged: true` on an otherwise
+        # ordinary success envelope (repository.ts: the `noop` plan). Nothing reached the KB this
+        # session, so it must not silence the Stop reminder -- and counting it would hand an agent
+        # a way to buy credit by re-sending an old body verbatim. The vocab_rev it carries is
+        # still harvested; only the publish counter and the publish timestamps abstain.
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                tool_response=self._nested(self._success_payload(unchanged=True)),
+            )
+        )
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"]["publishes"], 0)
+        server = state["servers"][SERVER_KEY]
+        self.assertNotIn("lastPublishAt", server)
+        self.assertNotIn("lastPublishSlug", server)
+        self.assertEqual(server["vocabRev"], 19)
+
+    def test_a_publish_response_with_no_recognizable_envelope_is_not_counted(self):
+        # No positive evidence of a write is not evidence of one. Silence beats a false credit,
+        # because the credit is what suppresses the reminder.
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                tool_response={"content": [{"type": "text", "text": "server said something"}]},
+            )
+        )
+        self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_an_ok_false_envelope_is_a_failure(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                tool_response=self._nested({"ok": False, "slug": "some-plan", "rev": 3}),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_a_non_numeric_rev_is_not_a_success_envelope(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                tool_response=self._nested({"slug": "some-plan", "rev": "eight"}),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_publish_topic_success_counts_without_a_rev(self):
+        # publish_topic's success envelope is `{slug, state, degree}` -- a real write with no
+        # revision number at all, so `rev` has to be optional-when-absent rather than required.
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_topic",
+                tool_response=self._nested(
+                    {"slug": "kb-discipline", "state": "organic", "degree": 4, "vocab_rev": 20}
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"]["publishes"], 1)
+        self.assertEqual(state["servers"][SERVER_KEY]["lastPublishSlug"], "kb-discipline")
+
+    def test_append_entry_success_still_sets_last_append_at(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__append_entry",
+                tool_response=self._nested(
+                    {
+                        "slug": "journal-2026-09-17",
+                        "action": "appended",
+                        "rev": 4,
+                        "url": "/kb/home/entry/journal-2026-09-17",
+                        "body_length": 900,
+                        "body_hash": "cafe",
+                    }
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        server = self.dump_state()["servers"][SERVER_KEY]
+        self.assertTrue(server["lastAppendAt"])
+        self.assertEqual(server["lastPublishSlug"], "journal-2026-09-17")
 
 
 if __name__ == "__main__":

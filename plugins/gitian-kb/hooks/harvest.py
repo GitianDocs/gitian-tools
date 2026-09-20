@@ -37,21 +37,48 @@ import state as state_mod
 # fallback session_digest.py's own reader/writer use.
 DEFAULT_KB_SLUG = "home"
 
-READ_SUFFIXES = ("get", "search", "list", "neighbors", "topic", "history", "file_intents")
-PUBLISH_MARKERS = ("publish_doc", "publish_memory", "publish_entry", "publish_topic", "append_entry")
+# Tools whose NAME alone makes a call an orientation read. `read_resource` is deliberately ABSENT
+# ([[kb-scribe-delegation]]): it is the server's own resource-read tool -- the only channel a
+# plugin SUBAGENT has, since it carries no ReadMcpResourceTool in its registry -- but four of its
+# five uris are the STATIC `gitian-kb://format/*` publish-format instructions, which expose no KB
+# content whatsoever. Crediting those would let any scribe dispatch satisfy the parent's
+# orientation check ("has anything in this session looked at the KB yet") with no sweep having
+# happened. Only `gitian-kb://vocab` is real KB content, and `_is_vocab_read` credits it below --
+# matching the other spelling of the same read, `ReadMcpResourceTool`, which has never counted for
+# a format uri either.
+READ_SUFFIXES = (
+    "get",
+    "search",
+    "list",
+    "neighbors",
+    "topic",
+    "history",
+    "file_intents",
+)
+# patch_doc/patch_memory ARE writes to the KB -- they carry no body, but they revise an item and
+# are the scribe's normal revision path, so a session whose whole KB contribution was a patch must
+# not read as "nothing published" to the Stop reminder (whose own marker list mirrors this one).
+PUBLISH_MARKERS = (
+    "publish_doc",
+    "publish_memory",
+    "publish_entry",
+    "publish_topic",
+    "append_entry",
+    "patch_doc",
+    "patch_memory",
+)
 APPEND_MARKERS = ("append_entry", "publish_entry")
 RETRACT_MARKERS = ("retract_item", "retract_topic")
 MAX_TOPICS = 200
 
-# Fallback regexes for the ORIGINAL, unnested/top-level shape (e.g. a test fixture or a future
-# transport that puts these fields directly on the envelope/response, not inside an MCP content
+# Fallback regex for the ORIGINAL, unnested/top-level shape (e.g. a test fixture or a future
+# transport that puts this field directly on the envelope/response, not inside an MCP content
 # block). A REAL MCP tool response nests the server's JSON as an ESCAPED STRING inside
-# {"content": [{"type": "text", "text": "{\"vocab_rev\": 19, ...}"}]} -- these patterns never
-# match THAT text (the escaped `\"` breaks the literal `"vocab_rev"`/`"slug"` match), which is
-# why _max_vocab_rev/_first_slug/_publish_succeeded below ALSO decode and structurally inspect
-# each content block via _decoded_blocks. Kept here as the fallback for the unnested shape.
+# {"content": [{"type": "text", "text": "{\"vocab_rev\": 19, ...}"}]} -- this pattern never
+# matches THAT text (the escaped `\"` breaks the literal `"vocab_rev"` match), which is why
+# _max_vocab_rev below ALSO decodes and structurally inspects each content block via
+# _decoded_blocks. Kept here as the fallback for the unnested shape.
 VOCAB_REV_RE = re.compile(r'"vocab_rev"\s*:\s*(\d+)')
-SLUG_RE = re.compile(r'"slug"\s*:\s*"([^"]*)"')
 
 # The mint-description follow-up (T8): the live server warning shape (linksWarnings() in
 # src/lib/kb/mcp-server.ts, documented in docs/kb-mcp-transport.md) is a LintWarning object
@@ -87,7 +114,8 @@ def _parse_stdin():
 
 
 def _is_gitian_call(tool_name, tool_input):
-    """Guard: a gitian MCP tool call, or a ReadMcpResourceTool read of a gitian-kb:// resource."""
+    """Guard: a gitian MCP tool call (`read_resource` included -- its name carries "gitian" like
+    every other tool on that server), or a ReadMcpResourceTool read of a gitian-kb:// resource."""
     if isinstance(tool_name, str) and "gitian" in tool_name:
         return True
     if tool_name == "ReadMcpResourceTool":
@@ -97,7 +125,18 @@ def _is_gitian_call(tool_name, tool_input):
 
 
 def _is_vocab_read(tool_name, tool_input):
-    if tool_name != "ReadMcpResourceTool":
+    """Either spelling of the same read: a ReadMcpResourceTool read of gitian-kb://vocab (what a
+    primary session does) or the server's `read_resource` tool called with that uri (what a
+    subagent must do -- it has no resource-read tool). Both carry the uri in `tool_input.uri`.
+    Their RESPONSES differ, though, and _extract_topics handles both: ReadMcpResourceTool answers
+    `contents: [{text: "<vocab json>"}]`, while the tool answers `content: [{text: "<json of
+    {uri, mimeType, text}>"}]` -- the vocabulary one level deeper, inside `text`.
+
+    This is also the ONLY `read_resource` uri that earns an orientation read (see READ_SUFFIXES):
+    the other four are the static format docs."""
+    if not isinstance(tool_name, str):
+        return False
+    if tool_name != "ReadMcpResourceTool" and not tool_name.endswith("read_resource"):
         return False
     uri = tool_input.get("uri")
     return isinstance(uri, str) and "gitian-kb://vocab" in uri
@@ -146,8 +185,8 @@ def _decoded_blocks(tool_response):
     -- {"content": [{"type": "text", "text": "{\\"vocab_rev\\": 19, ...}"}]} -- so a plain regex
     or substring check run over the JSON-rendered envelope never sees an unescaped '"vocab_rev"'
     or '"isError": true'; it sees '\\"vocab_rev\\"' instead, which doesn't match. Decoding each
-    block and inspecting the resulting object structurally (see _max_vocab_rev/_first_slug/
-    _publish_succeeded below) is what actually reaches the server's real fields. A block that
+    block and inspecting the resulting object structurally (see _max_vocab_rev and
+    _envelope_candidates below) is what actually reaches the server's real fields. A block that
     fails to parse is skipped, never raised."""
     for text in _text_blocks(tool_response):
         try:
@@ -155,20 +194,6 @@ def _decoded_blocks(tool_response):
         except Exception:
             continue
         yield parsed
-
-
-def _response_text(tool_response):
-    """JSON-render just the tool_response payload -- publish-success/slug detection is scoped to
-    the response only (never the whole stdin envelope), so a legitimate tool_input body that
-    merely contains the words "validation_failed" or "isError" as prose doesn't get misread as a
-    failure marker. Contrast with _max_vocab_rev, which the spec explicitly scopes to the RAW
-    stdin text."""
-    if isinstance(tool_response, str):
-        return tool_response
-    try:
-        return json.dumps(tool_response)
-    except Exception:
-        return ""
 
 
 def _max_vocab_rev(raw_text, tool_response):
@@ -191,39 +216,70 @@ def _max_vocab_rev(raw_text, tool_response):
         return None
 
 
-def _first_slug(resp_text, tool_response):
-    """The first slug found: the raw resp_text regex (the original, unnested/top-level shape --
-    kept as a fallback, scoped to the response only per _response_text's own rationale) first,
-    else a top-level "slug" string inside any successfully-decoded nested text block (the real
-    MCP wire shape -- see _decoded_blocks)."""
-    match = SLUG_RE.search(resp_text)
-    if match:
-        return match.group(1)
-    for parsed in _decoded_blocks(tool_response):
-        if isinstance(parsed, dict):
-            slug = parsed.get("slug")
-            if isinstance(slug, str) and slug:
-                return slug
-    return None
+def _envelope_candidates(tool_response):
+    """Every dict that could be the server's own response envelope, best evidence first: each
+    successfully-decoded nested content block (the REAL MCP wire shape) and then, as the
+    documented fallback for the unnested/top-level shape, the tool_response itself. Scoped to the
+    response -- never tool_input -- so a request body that merely quotes an error code as prose
+    can neither forge a failure nor forge a success."""
+    candidates = [p for p in _decoded_blocks(tool_response) if isinstance(p, dict)]
+    if isinstance(tool_response, dict):
+        candidates.append(tool_response)
+    return candidates
 
 
-def _publish_succeeded(resp_text, tool_response):
-    """A publish call is a success unless a failure marker is found -- checked both over the raw
-    resp_text (the original, unnested/top-level shape: a literal '"isError": true' or a
-    "validation_failed" substring) AND over each nested content block's own raw text (a
-    "validation_failed" substring survives JSON-escaping unchanged, since escaping only touches
-    quote/backslash/control characters, never the plain letters of that word) AND structurally
-    over each successfully-decoded block (a decoded isError == True -- the one marker that a raw
-    substring check on the escaped '\\"isError\\": true' text would miss; see _decoded_blocks)."""
-    if '"isError": true' in resp_text or "validation_failed" in resp_text:
+def _is_failure_envelope(payload):
+    """Every refusal the server can answer a write with is `errResult({error: "<code>", ...})`
+    (mcp-server.ts) -- a STRING `error`, which is the ONE field they all share: `rev_conflict`,
+    `base_rev_required`, `edit_no_match`, `patch_conflict`, `validation_failed`, `not_found`,
+    `slug_taken`, `forbidden`, `internal`. `ok: false` is the repository layer's own internal
+    spelling and `isError` the MCP transport's, both accepted so a shape that surfaces either one
+    instead reads as the failure it is."""
+    if isinstance(payload.get("error"), str) and payload["error"].strip():
+        return True
+    if payload.get("ok") is False:
+        return True
+    return payload.get("isError") is True
+
+
+def _is_success_envelope(payload):
+    """POSITIVE evidence that a write landed. Every successful write answers with the item's
+    `slug` (repository.ts::PublishSuccess, and publish_topic's own `{slug, state, degree}`), and
+    the publish/patch/append tails add a numeric `rev`. `rev` is therefore required to be numeric
+    only WHEN PRESENT -- publish_topic mints a topic with no revision number at all -- while the
+    slug is unconditional: with no slug there is nothing to say was written, and the whole point
+    of reading success positively is that "no failure marker found" is not evidence of one."""
+    slug = payload.get("slug")
+    if not isinstance(slug, str) or not slug:
         return False
-    for text in _text_blocks(tool_response):
-        if "validation_failed" in text:
-            return False
-    for parsed in _decoded_blocks(tool_response):
-        if isinstance(parsed, dict) and parsed.get("isError") is True:
-            return False
+    rev = payload.get("rev")
+    if rev is not None and (isinstance(rev, bool) or not isinstance(rev, (int, float))):
+        return False
     return True
+
+
+def _publish_outcome(tool_response):
+    """The success envelope a write actually landed, or None when it recorded nothing. A failure
+    anywhere in the response wins outright: an envelope that is BOTH (a decoded error block plus
+    a slug-bearing sibling) is a failure, since the failure is the specific claim.
+
+    A no-op does NOT count. The server reports a write whose content already matched the head as
+    an ordinary success envelope carrying `unchanged: true` (repository.ts's `noop` plan) --
+    nothing was stored, so the session contributed nothing to the KB, and the counter this feeds
+    is what silences the Stop reminder for the rest of the epoch. Counting it would also hand an
+    agent a way to buy that silence by re-sending an old body verbatim. The envelope's `vocab_rev`
+    is still harvested; only the publish counter and the publish timestamps abstain."""
+    success = None
+    for payload in _envelope_candidates(tool_response):
+        if _is_failure_envelope(payload):
+            return None
+        if success is None and _is_success_envelope(payload):
+            success = payload
+    if success is None:
+        return None
+    if success.get("unchanged") is True:
+        return None
+    return success
 
 
 def _topics_from(obj):
@@ -234,15 +290,39 @@ def _topics_from(obj):
     return None
 
 
+def _nested_resource_payload(parsed):
+    """The resource document inside a `read_resource` TOOL response. That tool answers
+    `jsonResult({uri, mimeType, text})` (mcp-server.ts), so the vocabulary is JSON-encoded TWICE:
+    once as the resource's own `text`, and again as the content block's `text`. A reader that
+    decodes one level lands on `{"uri": ..., "mimeType": ..., "text": "{\\"topics\\": [...]}"}`
+    and finds no `topics` key at all -- which is why the vocab cache silently stopped filling the
+    moment subagents started reading the vocabulary through the tool instead of through
+    `ReadMcpResourceTool` (whose `contents[].text` IS the document, one level shallower).
+    None when this block isn't that shape, or its inner text isn't JSON."""
+    if not isinstance(parsed, dict):
+        return None
+    inner = parsed.get("text")
+    if not isinstance(inner, str):
+        return None
+    try:
+        return json.loads(inner)
+    except Exception:
+        return None
+
+
 def _extract_topics(tool_response):
-    """Try json.loads on each content block's text field; fall back to the whole response;
-    None on total failure (harvest nothing)."""
+    """Try json.loads on each content block's text field, then -- for the `read_resource` tool's
+    doubly-encoded envelope -- on the resource payload nested inside it; fall back to the whole
+    response; None on total failure (harvest nothing)."""
     for text in _text_blocks(tool_response):
         try:
             parsed = json.loads(text)
         except Exception:
             continue
         topics = _topics_from(parsed)
+        if topics is not None:
+            return topics
+        topics = _topics_from(_nested_resource_payload(parsed))
         if topics is not None:
             return topics
     try:
@@ -306,15 +386,18 @@ def harvest(raw_text, payload):
     incr_reads = _is_read_call(tool_name, is_vocab_read)
 
     incr_publishes = False
-    resp_text = _response_text(tool_response)
-    if _is_publish_call(tool_name) and _publish_succeeded(resp_text, tool_response):
-        incr_publishes = True
-        server_updates["lastPublishAt"] = state_mod.now_iso()
-        slug = _first_slug(resp_text, tool_response)
-        if slug is not None:
-            server_updates["lastPublishSlug"] = slug
-        if _is_append_call(tool_name):
-            server_updates["lastAppendAt"] = state_mod.now_iso()
+    if _is_publish_call(tool_name):
+        success = _publish_outcome(tool_response)
+        if success is not None:
+            incr_publishes = True
+            server_updates["lastPublishAt"] = state_mod.now_iso()
+            # The slug comes from the success envelope itself rather than from a regex sweep over
+            # the response: a refusal carries the item's slug too (revConflictError /
+            # baseRevRequiredError both name it), so "the first slug anywhere in the response"
+            # would happily record a write that never happened.
+            server_updates["lastPublishSlug"] = success["slug"]
+            if _is_append_call(tool_name):
+                server_updates["lastAppendAt"] = state_mod.now_iso()
 
     if not server_updates and not incr_reads and not incr_publishes:
         return None
@@ -477,7 +560,7 @@ def _slugs_from_member_value(node):
 def _extract_minted_slugs(raw_text, tool_response):
     """Defensive end-to-end extraction: a cheap substring gate on the raw stdin text (matches the
     spec: "when the raw envelope text contains organic_topics_minted"), then a structured search
-    scoped to tool_response only -- never tool_input, mirroring _response_text's scoping
+    scoped to tool_response only -- never tool_input, mirroring _envelope_candidates' scoping
     rationale so prose in a request body can't forge a mint warning. Any parse failure anywhere,
     or a shape that doesn't resolve to anything, yields an empty list -- never an exception."""
     if MINT_WARNING_CODE not in raw_text:
@@ -503,10 +586,13 @@ def _extract_minted_slugs(raw_text, tool_response):
 
 def _mint_message(slugs):
     plural = len(slugs) != 1
+    # Addressed to whoever just published -- normally kb-scribe, in whose context this fires
+    # (PostToolUse runs where the tool call was made), which is also the agent that can describe
+    # a topic it just minted without another round trip to the primary.
     return (
-        "%s %s %s auto-minted without descriptions -- worth an immediate publish_topic for each "
-        "with a real one-line description so the vocabulary stays legible; advisory, once per "
-        "topic per session."
+        "%s %s %s auto-minted without descriptions -- worth a publish_topic for each, in this "
+        "same pass, with a real one-line description so the vocabulary stays legible; advisory, "
+        "once per topic per session."
         % ("topics" if plural else "topic", ", ".join(slugs), "were" if plural else "was")
     )
 

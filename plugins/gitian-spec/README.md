@@ -4,6 +4,9 @@ Author long-form work documents — specs, plans, designs, brainstorms, handoffs
 as gitian Knowledge Base docs instead of loose markdown files. "Write me a design doc for X"
 produces a published KB doc with a full manifest and a URL, not an untracked file in the repo.
 
+The orchestrating model never retypes the doc: it scans the KB, briefs gitian-kb's `kb-scribe`
+subagent with the session transcript, and reads back the published summary and heading outline.
+
 ## Install
 
 ```
@@ -23,17 +26,19 @@ detects the gap and says so.
 
 ## What it does
 
-- **Skill** (`skills/gitian-spec`): the authoring discipline — scan the KB before writing
-  (search + neighbors, adopt settled decisions, cross-link, flag stale manifests), choose the
-  right shape (doc vs entry, type mapping for brainstorms and progress updates), derive every
-  manifest field from ground truth (project from cwd, branch/worktree from git, dates from the
-  clock, `topics`/`mentions` from the work's actual subject matter via `gitian-kb://vocab`,
-  `category` from the user's routing prompts — update-over-create bias before minting a new doc),
-  terminal-state hygiene, commits-list conventions, and the 14-point implementation-recap
-  checklist.
+- **Skill** (`skills/gitian-spec`): the routing and authoring discipline — scan the KB before
+  anything is written (search + neighbors, adopt settled decisions, cross-link, flag stale
+  manifests), choose the right shape (doc vs entry, type mapping for brainstorms and progress
+  updates), brief `kb-scribe` with the facts it cannot derive (project from cwd, repo/branch/
+  worktree from git, absolute dates, `files`, terminal flips stated explicitly), read back the
+  report, and surface the url. The full manifest-derivation rules and the 14-point
+  implementation-recap checklist live with the scribe, in gitian-kb's
+  `skills/gitian-kb/references/spec-authoring.md`; this skill keeps the commits-list convention
+  and the recap placement rule. When subagents are unavailable it says how to author inline.
 - **Hook** (`hooks/spec-context.sh`, wired via `hooks/hooks.json`): fires on `SessionStart`. One
-  routing line (long-form docs are KB deliverables); it adds nothing gitian-kb's session hook
-  already injects, and warns only when gitian-kb is missing from `installed_plugins.json`.
+  routing line (long-form docs are KB deliverables, briefed to the scribe); it adds nothing
+  gitian-kb's session hook already injects, and warns only when gitian-kb is missing from
+  `installed_plugins.json`.
 - **Command** (`/gitian-spec:recap`, `commands/recap.md`): run at feature-landing time — flips
   the governing doc's manifest to its terminal state and writes the implementation recap, with
   the recent `git log` preloaded.
@@ -42,7 +47,9 @@ detects the gap and says so.
 
 gitian-spec owns doc-as-deliverable **authoring** (being asked to write a spec/plan/design/
 brainstorm/handoff/session note; documenting what a landed feature shipped). gitian-kb owns
-**orientation** (RAG at work-start), completion-point distillation, the journal, and memories.
+**orientation** (RAG at work-start), completion-point distillation, the journal, memories, and
+both subagents — `kb-librarian` (read-only pulls) and `kb-scribe` (every write, including the
+docs this plugin routes to it).
 Both SKILL.md files cross-reference each other, and gitian-spec inherits gitian-kb's publishing
 rules by reference — the `gitian-kb://format/*` resources stay the single schema authority.
 

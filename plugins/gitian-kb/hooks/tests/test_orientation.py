@@ -99,6 +99,9 @@ class ZeroReadsFiresOnce(OrientationTestCase):
         self.assertIn("neighbors", reason)
         self.assertIn("advisory", reason.lower())
         self.assertIn("re-send", reason.lower())
+        # [[kb-scribe-delegation]]: orientation is a DISPATCH now -- the librarian sweeps and
+        # hands back a digest; the primary doesn't run the three reads itself.
+        self.assertIn("kb-librarian", reason)
 
         state = self.dump_state()
         session = state["sessions"]["sess-1"]
@@ -146,7 +149,10 @@ class RepoClause(OrientationTestCase):
             proc = self.run_hook(envelope(cwd=plain_dir))
             reason = self.assert_deny(proc)
             self.assertIn("file_intents", reason)
-            self.assertNotIn(" on ", reason.split("consider")[1].split("plus")[0])
+            # The intents clause is the span between the dispatch line and the search/neighbors
+            # half; with no derivable repo it must carry no "on <owner/name>" tail.
+            intents_clause = reason.split("digest: ")[1].split(" plus ")[0]
+            self.assertNotIn(" on ", intents_clause)
         finally:
             shutil.rmtree(plain_dir, ignore_errors=True)
 

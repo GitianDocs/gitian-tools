@@ -1,482 +1,97 @@
 ---
 name: gitian-kb
-description: Use when starting work (to query prior decisions/context from the gitian Knowledge Base) and when finishing meaningful work — a settled design, a written plan, a durable fact worth remembering, a handoff, a day worth recording, or a landed feature — to publish distilled knowledge via the gitian MCP tools.
+description: Use when starting work (dispatch `kb-librarian` to orient in the gitian Knowledge Base) and at completion points — a settled design, a written plan, a durable fact worth remembering, a handoff, a day worth recording, or a landed feature — to brief `kb-scribe` with what mattered so it publishes the distilled item.
 allowed-tools: Bash(git remote get-url:*), Bash(git branch:*), Bash(date:*)
 ---
 
 # gitian-kb
 
-The gitian Knowledge Base (KB) is the durable memory git history and code comments don't give you: design rationale, decisions, status, next steps. This skill is the discipline for reading it before you start work and writing to it when work reaches a shape worth keeping. The KB tools teach the format themselves (via resources); this skill teaches when and how to use them.
+The gitian Knowledge Base (KB) is durable memory git history doesn't give you: rationale,
+decisions, status, next steps. **You decide WHEN a publish is warranted and WHAT mattered; two
+subagents do the rest** — `kb-librarian` reads, `kb-scribe` writes (every publish, revision,
+append, retraction, dedupe merge).
 
-## Preloaded context
-
-- Repo remote: !`git remote get-url origin 2>/dev/null || echo "(none)"`
+- Repo remote: !`git remote get-url origin 2>/dev/null || echo "(none)"` — normalize it to
+  `owner/name` (drop scheme/host and `.git`) before you brief it
 - Branch: !`git branch --show-current 2>/dev/null || echo "(none)"`
 - Today (UTC): !`date -u +%Y-%m-%d`
 
-Preloaded so you never spend tool calls deriving them: set `repo` by normalizing the remote to `owner/name` (explicit `null` if "(none)" — never guess), use today's date for entry `date` fields, and populate frontmatter from these values instead of re-running git.
-
-## Picking a primitive
-
-Pick by shape, not size:
-
-- **memory** — one atomic, durable fact: a preference, a gotcha, a project fact. Small and stable, even if the investigation that produced it took days.
-- **doc** — a long-form artifact with a lifecycle: `spec`, `plan`, `design`, `handoff`, or `recap`, carrying the full manifest (status, impl_status, next_steps). Use it once the work has shape and needs tracking over time.
-- **entry** — a dated journal record for a scope (`work` or `personal`): what happened, worth recalling later, even if it's short.
-
-A multi-day effort with status and next steps is a doc even if the write-up is one paragraph; a single durable fact is a memory even if it took a long investigation to learn.
-
-## The loop
-
-1. **Orient** — before any substantive work, not just before writing: read `gitian-kb://vocab` first (the live topic + category vocabulary — slug, description, degree for topics; slug, name, routing prompt for categories), then `search` (or `list`) the KB for the topic, then call `neighbors` on the best hit. This is RAG at work-start, not a publish-time formality — the item you're about to create may already exist under a different slug you haven't thought of, the vocab may already have a topic naming what you're about to link, and `neighbors`' topic-derived neighborhood surfaces adjacent decisions a keyword search alone would miss. Working in a repo? `file_intents` the repo too — it lists which in-flight docs claim which paths; on overlap with what you're about to touch, `get` the contending doc before proceeding. `include_landed: true` widens that same call into "who has reworked this area before" — deactivated (landed/abandoned) plans included, not just what's in flight.
-2. **Thread** — read the matching `gitian-kb://format/<primitive>` resource, then adopt what's already decided: don't re-litigate a settled design, cross-link into it via `related` (slugs) instead of duplicating it. Before heavily editing a doc you didn't write, pull it with `get` and skim `history` to see how it evolved. Call `neighbors` on it too — its topic-derived `why` surfaces adjacent decisions you wouldn't have thought to `search` for.
-3. **Publish** — call the right tool (`publish_memory` / `publish_doc` / `publish_entry`) with the full manifest, not a partial one, `topics`/`mentions`/`category` included (see **Topics & categories** below). Updating today's journal entry is the one exception: use `append_entry` (see **The journal is a running record** below) — a small, targeted call, not a full-manifest publish.
-4. **Confirm** — every `publish_*` call returns a `url`; surface it to the user: "published → `<url>`". (`retract_item` returns `{slug, rev, tombstoned}` — no url.)
-
-Retract obsolete items with `retract_item` rather than trying to delete their content — it appends a tombstone revision. History survives, and re-publishing the same slug un-deletes it.
-
-A `publish_*` result may also carry `suggested_topics`: up to 5 existing topics the server noticed read close to what you just wrote but that you didn't already link in `topics`/`mentions`. Review it on every publish — when a suggestion is genuinely on-topic, re-publish the same slug with it added rather than ignoring it; precise linking is what keeps `neighbors` useful for everyone who calls it after you.
-
-Worked example: fixing a flaky CI failure. `search "flaky auth"` turns up nothing; read `gitian-kb://format/memory`; fix the bug; `publish_memory` with slug `ci-flaky-oauth-token`, `type: reference`; tell the user "published → `<url>`" from the response.
-
 ## When to publish — trigger table
 
-| Trigger | Tool | Notes |
-|---|---|---|
-| Design settled | `publish_doc` | `type: spec` or `type: design` |
-| Plan written | `publish_doc` | `type: plan` |
-| Durable fact learned | `publish_memory` | a preference, gotcha, or project fact worth recalling next session |
-| Meaningful event (pivots included) | `append_entry` | append to today's running entry as it happens — see the running-record section below; `publish_entry` remains for a full rewrite |
-| Handing off mid-stream | `publish_doc` | `type: handoff` |
-| Conversation pivots off a thread | `publish_doc`/`publish_memory` + `append_entry` | a pivot ends the old thread as surely as finishing it — publish or update its governing item *before* engaging the new topic, and fold the pivot into today's journal entry |
-| Context compacted | `publish_doc` | `type: handoff` — right after a compaction, distill the summary plus what you still hold into a handoff a fresh agent could resume from (the session hook reminds you); before a *manual* `/compact`, run `/gitian-kb:handoff` to capture state pre-squash |
-| Feature landed | `publish_doc` (`type: recap`) **and** flip the feature doc's `status` to a terminal value | do both — a recap without the status flip leaves the KB stale |
+| Trigger | Brief the scribe for |
+|---|---|
+| Design settled | a `doc`, `type: spec` or `design` |
+| Plan written | a `doc`, `type: plan` |
+| Durable fact learned | a `memory` — a preference, gotcha or fact |
+| Meaningful event, pivots included | a journal append (`append_entry`) |
+| Handing off, or a compaction squashed context | a `doc`, `type: handoff` (*manual* `/compact`: `/gitian-kb:handoff` first) |
+| Conversation pivots off a thread | an update to the old thread's item *before* the new topic, + a journal append |
+| Feature landed | the terminal `status` flip **and** a recap — both, or the KB goes stale |
+| Status/commits/next_steps moved | a revision of that slug, never a new one |
 
-## Companion: gitian-spec
+**Never auto-publish** — completion points and explicit user intent only; never silently, in bulk,
+or on a timer. A pivot or a wrapped session clears the bar; a rename or a re-run does not.
 
-When the gitian-spec plugin is installed, long-form *authoring* — being asked to write a spec,
-plan, design, brainstorm, handoff, or session note, and documenting what a landed feature shipped
-— follows that skill's discipline (scan-before-write, manifest field derivation, commits-list
-conventions, the implementation-recap checklist and its in-body-vs-separate-doc placement rule).
-This skill keeps orientation (RAG at work-start), completion-point distillation, the journal, and
-memories. Same tools, same `gitian-kb://format/*` authority either way — gitian-spec ships no MCP
-config of its own and rides this plugin's single connection.
+## Dispatching
 
-## Delegating mechanical work: kb-librarian
+- **Orient before substantive work, not just before writing.** Dispatch the librarian at work
+  start: vocab, `search`, `neighbors` on the best hit, `file_intents` for the repo
+  (`include_landed: true` widens it to who reworked those paths) — on overlap with paths you are
+  about to touch, read the contending doc first.
+- **Background, one at a time.** Types are `gitian-kb:kb-librarian` and `gitian-kb:kb-scribe`. At
+  most one scribe and one librarian in flight; a follow-up on the same item — a correction, a
+  sign-off answer, a later status flip — goes to the **live scribe via `SendMessage`**, unrelated
+  work waits for the report.
+- **Reads you will act on, you make yourself.** `get` the doc you are about to follow; a one-off
+  `search`/`get` stays inline — spawning an agent costs more. On `ambiguous_slug`, retry with a
+  `kb` from its `candidates`, never a guess. Dispatch the librarian for a multi-call sweep, a
+  digest, or a vocab-delta refresh when `vocab_rev` moves.
+- **Writes are never inline.** Brief the scribe — it carries the authoring discipline.
 
-Some of what this skill asks for is judgment (what to write, which topics to link); the rest is
-read-heavy or purely mechanical, and shouldn't cost the primary model's context. When this plugin's
-`kb-librarian` subagent (`agents/kb-librarian.md`, sonnet-pinned) is available, delegate to it along
-this division of labor:
+## The brief (10-20 lines)
 
-| Operation | Who | Why |
-|---|---|---|
-| Rev-1 authorship + its publish call | Primary, inline | Emission = authorship; overhead minimal |
-| Mechanical doc revisions (flips, merges) | `patch_doc` / `patch_memory`, inline or via kb-librarian | Server-side merge — the body never re-crosses the wire, so the saving is real and the doc can't be truncated |
-| Journal appends | `append_entry` server-side | Highest frequency; clobber-proof; all clients |
-| Orientation sweep, vocab refresh | kb-librarian | Read-heavy, mechanical, context-fat |
-| Merging a duplicate into a survivor you named | kb-librarian's dedupe run | Mechanical once the survivor is chosen: verbatim `body_append`, union-merged lists, mutual `related`, `retract_item` of the duplicate |
-| Topic/category choice, body content, which duplicate survives | Primary, always | Judgment + fragmentation risk |
+Required every time — the scribe has no cwd and no conversation:
 
-Body authorship and topic/category choice are never delegated — a KB doc's value is that the
-author was there, and under auto-minting any slug a weaker model invents becomes a live topic, so
-the fragmentation risk stays with the primary. A single resource read or one-off tool call also
-stays inline — spawning a subagent costs more than the call it would save. Reach for
-`kb-librarian` for the shape of work in the rows that name it: dispatch it for the orientation
-sweep at session start instead of spending 4-6 calls and their full outputs inline, dispatch it for
-a vocab-delta refresh when `vocab_rev` has moved (see below), hand it mechanical revisions as
-an exact delta ("flip status to landed, add these commits, change nothing else") rather than
-re-emitting a whole manifest yourself, and hand it a dedupe run once you have decided which of two
-duplicate docs survives — naming both slugs, because choosing the survivor is yours, not its.
+- **intent** — publish | revise | journal | retract | dedupe
+- **primitive / type** — memory | doc (`spec`/`plan`/`design`/`handoff`/`recap`) | entry
+- **kb** — the target, never blank: the KB the human named, else the `kb` label of the sweep hit
+  being revised, else `auto` (let `repo` routing decide). **A KB the human names is the brief's
+  `kb` for every write in that thread.**
+- **repo / branch** — `owner/name` (normalized above) + the branch. `auto` needs `repo`: with
+  neither, a write can only land in `home`. Docs and journal entries with an org-owned `repo` route
+  to `<org>/team`; memories never route. Every write answers `landed_in` — the scribe reports it
+  and hands back `NEEDS SIGN-OFF` on a landing that isn't the brief's `kb`.
+- **project / files** — the `project`, and the paths a plan or code-shaped doc will touch
+  (`files`), else no file intents at all
+- **what happened, and the decisions *with the why*** — the substance; only you have it
 
-## Orient first
+Whatever else applies: **target slug** (revising, retracting, merging — survivor **and** duplicate
+for a dedupe); **rejected alternatives**; **status / impl_status** — state a terminal flip or
+retraction explicitly, the scribe infers neither; **pr / commits**; **topics to mint** — only a
+genuinely new concept; **transcript + transcript-extract** — both session-context lines when the
+conversation holds the substance.
 
-Read `gitian-kb://vocab` (see **Topics & categories** below) plus the matching format resource before the *first* use of each publish tool in a session — don't guess the shape:
+## Reports and sign-off
 
-- `gitian-kb://vocab` — the live topic vocabulary and category routing prompts, as JSON
-- `gitian-kb://format/overview` — the three primitives, upsert/versioning rules, null-not-omitted
-- `gitian-kb://format/memory` — memory fields and slug conventions
-- `gitian-kb://format/doc` — the full doc manifest, enums, distillation and recap guidance
-- `gitian-kb://format/entry` — the journal format and the running-record discipline
+A success report is one line — `slug rev N → url` — plus the `landed_in` KB, `warnings` verbatim,
+the judgment calls, and for a spec-class doc its `summary` and heading outline. Warnings are
+advice, not blockers — relay them, fix them later.
 
-`search` before inventing a new slug. The same subject may already have an item under a name you didn't guess — re-publish the *same* slug to update it (appends a revision); only mint a new slug for a genuinely new subject.
+**`NEEDS SIGN-OFF`** means nothing was published: create-vs-revise unclear, the brief contradicting
+the transcript or the doc, an unstated terminal flip or retraction, an edit that would drop
+content, or a landing that isn't the `kb` you briefed. It carries a ≤100-word draft and one
+question. Answer with `SendMessage` to that same scribe; it then publishes.
 
-## Targeting a KB (`kb`)
+## When you cannot spawn agents
 
-Every tool takes an optional `kb` alongside its other arguments — you can belong to more than one KB (your `home` KB, any custom ones you're a member of, and any **org** KB you hold a seat for), and others can be linked to you read-only. Two forms are accepted: a bare slug for a KB of your own, or a qualified `login/kb-slug` — which addresses both a KB linked to you (see **Linked KBs** below) and an org KB, whose `login` is the org's (see **Org KBs** below). A write with no `kb` routes by `repo` (docs and journal entries) or lands in `home` (memories, and anything with no routable `repo`); a bare slug on a single-target read (`get`/`history`) falls through to the rest of your KBs only if it isn't found in the default.
-
-**Where a write lands — six rules, checked on every write, not just the first:**
-
-1. **A KB the human named is an explicit `kb`.** "Put this in the org KB", "the team KB", a slug — that is a stated target, so set `kb` yourself on every write for that work, the follow-up `append_entry` included. Never leave a stated target to routing, and never assume a `kb` carries forward from the previous call; every call is independent. An explicit `kb` always wins, and an unresolvable one fails loudly with `not_found` rather than quietly landing in `home`.
-2. **Docs and journal entries route by `repo`; memories never do.** A `publish_doc`/`publish_entry`/`append_entry` with no `kb` whose `repo` is `<org>/<name>` lands in `<org>/team`. A memory — or any write with no `repo` — can only land in `home`, so a team-relevant memory needs an explicit `kb`.
-3. **Always set `repo` to the normalized `owner/name`** from the git remote above. Routing is computed from it: no `repo`, no routing, and the write lands in `home`.
-4. **Read `landed_in` on every write.** Every successful write names the KB it landed in (`home`, `<org>/team`, `login/slug`; a routed one also carries `routed_to`). If that isn't where the work belongs, fix it immediately and tell the user — and act on `org_kb_available` / `repo_missing_cannot_route` / `slug_exists_in_other_kb` the same way rather than ignoring them.
-5. **Moving an entry is an `append_entry` with `kb` set** — never re-publish a whole entry body to move it between KBs; a giant single-call body is how a tool call becomes unparseable and how content gets truncated. Move a large body in **several calls** — successive `append_entry` calls for an entry, successive `patch_doc` `body_append` calls for a doc — never one oversized call.
-6. **A sweep hit's `kb:` label is how you learn a team KB exists at all.** Read the labels your orientation sweep returns, and pass one back verbatim as `kb` on any revision of that item.
-
-- **When to pass it.** Sweeping reads (`search`/`list`/`neighbors`/`file_intents`) sweep every KB you belong to *plus* any KB linked to you (see **Linked KBs** below) by default, each hit labeled with the KB it came from — pass `kb` only to narrow to one you already know you want. Writes (`publish_*`/`patch_*`/`append_entry`/`retract_item`/`publish_topic`/`retract_topic`) and the single-target reads (`get`, `history`, `topic`) default to `home` unless routing sends the write elsewhere (rule 2) — pass `kb` whenever you're working inside a different one, on every call, not just the first. `get`'s `owner` argument is **deprecated and ignored** — it is still accepted so older clients don't break, but it grants nothing: a teammate's org work lives in an **org KB** you are a member of (see **Org KBs** below), so a plain `get` reaches it, and a bare slug that isn't in any KB you can read is `not_found` whatever `owner` says.
-- **`ambiguous_slug`.** A bare slug (no `kb` given) to `get`/`history` that exists in more than one KB you can read — your own, linked, or **your own items in a write-only org KB** (`own-only`, see **Org KBs** below; a teammate's slug there is never a candidate, and never counts toward the ambiguity), beyond your default KB, which always wins the tie and never counts as ambiguous — comes back as an `ambiguous_slug` error naming `candidates` (`{ kb, primitive }` pairs, drawn only from KBs the slug actually matched). Retry the *exact same call* with `kb` set to the candidate you mean, copying its `kb` value exactly (a linked candidate's is qualified — see **Linked KBs** below). Never guess which one by picking the first candidate, by title, or by recency — the error exists precisely because that guess is unsafe.
-- **`reserved_kb_slug`.** Not a tool-call error — creating a KB, custom or org (the `/kb` UI's create flow and the org KBs panel at `/settings/org`; there is no MCP tool for either), rejects a requested slug that collides with a fixed route (`home`, `memory`, `doc`, `entry`, `graph`, `linked`) with this code. If you're ever asked to help name a new KB, steer clear of those six.
-
-### Linked KBs (`login/kb-slug`)
-
-Someone else's KB can be *linked* to one of yours — a **read-only**, **one hop**, **mutual**
-grant the two sides agree to through an invite. Once it's accepted, that KB's items show up in
-your sweeping reads alongside your own — *and yours show up in theirs*. A link is not a one-way
-"I get to read them": accepting exposes the whole KB you accept into, which is why accepting a
-link invite needs the `admin` role on that KB, the same role needed to send one. If a user asks
-you whether to accept, say that plainly — the exposure is the decision. Nothing about writing
-changes either way: `publish_*`, `patch_*`, `append_entry`, `retract_item`, `publish_topic` and
-`retract_topic` can only ever land in a KB you're a member of. Inviting, accepting, declining,
-and unlinking all happen in the web UI (the `/kb` invites inbox and `/kb/<kb>/settings`) — there
-is **no MCP tool for inviting or linking**, and no tool that lists who is linked to you. Don't
-try to arrange one over MCP; ask the user.
-
-- **Anything you don't own labels itself qualified.** The split is ownership, not access tier:
-  hits from a KB *you own* carry a bare `kb: <slug>`, and every other hit — a linked KB, a KB
-  someone invited you into, an org KB — carries `kb: <login>/<kb-slug>` instead.
-  **Pass that label back verbatim** as the `kb` argument on any follow-up call — `get`, `history`,
-  `neighbors`, a narrowed `search`; the qualified form addresses all three, on reads and (where
-  you have write access) writes. Never strip the `login/` prefix and retype the bare slug: a bare
-  slug prefers a KB you *own*, and since every user has one slugged `home`, the bare retry usually
-  resolves somewhere real and wrong rather than failing loudly.
-  (`file_intents` is the one exception to the label rule: its linked hits carry no `kb` at all —
-  they're identified by `owner: {login}` plus a `/kb/linked/<login>/<kb-slug>/...` url, and that
-  url's `<login>/<kb-slug>` is what you pass as `kb` to follow one up.)
-- **Two KBs you belong to can share a slug.** Slugs are unique per owner, not globally, and a
-  *member* invite — or an org KB — can put someone else's KB alongside your own same-named one
-  (`home` especially). A bare `kb` resolves **own-first**: your own wins the tie silently, and if
-  *neither* is yours it resolves to nothing rather than picking. Either way the qualified label is
-  the unambiguous address — use it whenever it matters which one you mean, rather than inferring
-  from a hit.
-- **Never guess across ambiguity.** A bare slug matching no KB of your own but two or more linked
-  KBs resolves to nothing — the same masked `not_found` an unknown KB gets, not a pick. When
-  `ambiguous_slug` comes back, its `candidates` already carry the qualified `kb` values: retry
-  with the one you mean, copied exactly. Choosing by order, title, or recency is precisely the
-  guess these errors exist to prevent.
-- **One hop, never transitive.** A KB linked to a KB that's linked to yours is not yours to read,
-  and no argument makes it so. Nor does a link ever widen to a KB's own linked set. If something
-  you expected isn't in the sweep, that's the boundary working — say so and ask for a link rather
-  than hunting for a targeting trick.
-
-### Org KBs (`org-login/kb-slug`)
-
-**Every gitian org has one**, slugged `team` — `<org-login>/team` — and it exists from the moment
-gitian first sees the org. It behaves like any other KB you're a member of (swept by default,
-addressed by the same two `kb` forms) with two things that have no analogue elsewhere:
-**membership is derived, never granted** — being in the GitHub org is the whole of it, there is no
-invite to accept and nothing to revoke — and **write and read are separate grants**, below.
-
-- **Writing is free; reading a teammate's work is the org's subscription.** Any member of the
-  GitHub org can publish into its `team` KB whether or not the org pays for anything. Until the org
-  subscribes you read back **exactly what you wrote there and nothing else** — your own items come
-  through every sweep, labeled `kb: <org-login>/team` like any other hit, and the KB is named in
-  `own_only_kbs` so a thin result is never mistaken for "the team has nothing in flight". A
-  `get`/`history` **naming that KB** (`kb: <org-login>/team`) on a slug you didn't write answers
-  `read_requires_entitlement` — "'<kb>' shows only what you wrote until the org subscribes;
-  '<slug>' is not yours" — rather than a masked `not_found`, because your write grant already
-  proves the KB and the slug exist. A **bare** slug is different: it never resolves to a
-  teammate's item there at all, and is not reported as an `ambiguous_slug` candidate either, so the
-  bare form is not an existence oracle — it just answers `not_found`. Nothing is lost and nothing
-  needs re-doing; the org subscribing makes all of it readable at once, with nothing to migrate.
-  Say that plainly rather than re-publishing the work somewhere else.
-- **Duplicates are the expected cost of an unpaid org.** Two members can write near-identical docs
-  without either seeing the other's, and a slug you cannot read is never a reason to mint the same
-  work under a different name. Write yours; once the org subscribes the pair becomes visible and
-  gets reconciled — that reconciliation is the `kb-librarian` dedupe run (see **Delegating
-  mechanical work** above), and picking which of the two survives is the primary's call, never the
-  subagent's.
-- **Docs and journal entries about an org's repos route there by default.** A `publish_doc`,
-  `publish_entry` or `append_entry` with **no `kb`** whose frontmatter `repo` is `<org>/<name>`
-  lands in `<org>/team`, not in `home`; memories never route. The response says where it went in
-  `routed_to`, every write says where it ended up in `landed_in`, and a routed write carries
-  `kb_read_paywalled` when that KB is one you can write but not read. An explicit `kb` always
-  wins — routing is the default, never an override. Read `landed_in` on every write and report
-  the KB it names; do not assume `home`.
-- **A routed publish creates; it never revises a body it didn't write.** If the slug already
-  exists in the routed KB, the write is refused with `slug_taken` rather than silently rewriting a
-  teammate's doc — the error's own hint says so: pass `kb: <org>/team` **and** `base_rev` (the rev
-  you read) to revise it deliberately. Both halves are required: the `kb` says which KB you meant,
-  the `base_rev` says which revision you built on (see **Revising an existing item** below).
-  A `patch_doc` with no `kb` finds the doc in the routed KB that holds it (the response says
-  `routed_to`); it is never refused with `slug_taken`, though it still needs its own `base_rev`.
-  Only `publish_doc` needs an explicit `kb` to revise a doc that already exists in the team KB.
-- **Two per-member toggles, both the org admin's.** Auto-routing can be turned off for you (then
-  the doc stays in `home` and you get an advisory `org_kb_available` warning naming the KB to
-  re-publish into), and write access itself can be turned off (then you read the KB your seat pays
-  for and publish nothing into it). Neither is yours to change; they live in the org's settings on
-  the web.
-- **Address it qualified.** `team` is every org's slug, so a bare `team` names none of them for
-  anyone in two orgs — and if it collides with a KB of your own, yours wins. `<org-login>/team` is
-  the address, on reads **and** writes, and it is the form reads label hits with. Pass that label
-  back verbatim, same as a linked KB's.
-- **Team work belongs in the org KB.** A doc or entry you publish into your own `home` KB about an
-  org repo is **invisible to your teammates** — nothing widens across personal KBs. Publish shared
-  plans, specs, designs and the team journal with `kb` set to the org KB: routing covers docs and
-  entries when `repo` is set, but a KB the human named is yours to set explicitly (rule 1 above);
-  keep personal notes in `home`. Memories never route, so a team-relevant memory needs an explicit
-  `kb` of its own — and `org_kb_available` fires on memories and unrouted entries too, not docs
-  alone. It is a **`kb`-less** advisory throughout: pass `kb` explicitly — `"home"` if it is
-  personal — and the advisory goes away.
-- **`get`'s `owner` argument is dead.** It used to reach a teammate's doc in their personal KB
-  under an org-derived grant. There is no such grant now: read the org KB.
-- **Membership is not something you can arrange.** Org membership and seats live in the org's own
-  settings on the web, not over MCP. If a KB you expected isn't in your sweep, say so — don't hunt
-  for a targeting trick.
-- **The org's categories are its admin's.** Every member writes items and mints topics; only the
-  org's admin adds or renames the `category` vocabulary. Pick from what `gitian-kb://vocab` lists.
-
-## Staying in sync mid-session (`vocab_rev`)
-
-Every successful tool response carries `vocab_rev` — a counter scoped to the **target KB** (the
-`kb` a write/single-target read resolves to, or your default `home` when omitted) that bumps on
-any vocabulary write to that KB: category CRUD, a topic mint/describe/tombstone/merge, including
-an auto-mint that happened as a side effect of someone else's publish. Track the value you last saw
-*per KB* — a `vocab_rev` from a custom KB and one from `home` are different counters and never
-comparable to each other. **If a later call's `vocab_rev` differs from the one you last saw for
-that same KB, re-read `gitian-kb://vocab` before your next publish into it** — the vocabulary
-changed mid-session, and publishing against a stale read risks linking a slug that no longer means
-what you think, minting a near-duplicate of something a teammate (or an earlier call in this same
-session) just minted, or missing a category that now fits. This is cheap: the vocab resource is
-small and the freshness signal rides on calls you're already making — no polling, no extra round
-trip. One catch: `gitian-kb://vocab` is a static URI with no per-read `kb` argument, so it always
-serves your **default** KB (always `home` — no mechanism makes another KB your default) — a session
-working a non-default `kb` sees that KB's `vocab_rev` on every response but has no resource read that
-reflects it, so don't chase that counter against `gitian-kb://vocab`; there's nothing yet to
-re-read it against. When the drift is more than "one topic changed" in your default KB, dispatch
-`kb-librarian` for the vocab-delta refresh instead of re-reading and re-diffing it yourself.
-
-## Topics & categories
-
-Doc-doc relatedness is entirely topic-derived now — there's no other correlation signal besides an explicit `related`/wikilink. Link deliberately, every publish:
-
-- **`topics`** (primary tier, "this item is *about* X") — advise 1-3 per item. **`mentions`** (secondary tier, "this item *touches* X" without being about it) — as many as apply. A slug in both collapses to primary.
-- **Prefer existing topics.** `gitian-kb://vocab` lists every live topic with its description and degree — link to what's already there before considering a new one. An empty description means nobody has described that topic yet (a **stub**); it is a real, live topic all the same and links to it score exactly like any other. A vague, catch-all topic (or one linked to nearly everything) contributes almost nothing to relatedness by construction (informativeness falls as membership grows), so precision beats coverage.
-- **Freshness discipline.** `gitian-kb://vocab` also carries `freshness` (0-1) and `dormant` (`freshness` below a fixed threshold) per topic, sorted freshness-descending — a topic nobody has linked in a while quietly decays, and any new item linking it revives it instantly, no ceremony required. When more than one live topic reads as on-topic, prefer the fresher one; treat the dormant tail as lower-priority, not gone — a dormant topic is due for a second look (re-link deliberately, or let it keep decaying) rather than an automatic pick. This is a display/routing signal only — it never changes what a link means, only which topic to reach for first.
-- **Aliases resolve transparently.** A merged topic never appears as its own entry in `gitian-kb://vocab` — only its canonical does, carrying `aliases: [...]` for every slug now merged into it. A link naming an alias still works (it resolves to the canonical on every read — degree, relatedness, `neighbors`, `topic`), but prefer linking the canonical spelling once you see it in the vocab response rather than perpetuating the old name. Merge/unmerge itself is a human call in the review queue, not a tool call — nothing here mints or removes an alias on your behalf.
-- **Cold domain: mint, don't default.** When nothing in `gitian-kb://vocab` fits the domain of what you're publishing — a genuinely new area of work the vocabulary hasn't caught up to yet — mint 1-3 genuine concept topics with real descriptions via `publish_topic` (not a bare auto-mint left undescribed). Never default to a topic that just names the project or repo (see `project_name_topic` below) and never default to publishing with empty `topics` (see `no_topics` below) — an empty or project-name-only vocab is exactly the situation this rule exists for, not an excuse to skip linking.
-- **A novel slug auto-mints — deliberately, not for free.** Naming a topic slug in `topics`/`mentions` that isn't in the vocab yet is never rejected and never inert: it auto-mints as an undescribed **stub** and is live in relatedness immediately, no `publish_topic` call required, no approval anywhere, and the response carries an informational `organic_topics_minted` warning naming what got minted. That lowered floor is not a license to invent freely — every fresh mint is a permanent vocabulary entry someone (a human, or `kb-librarian`'s vocab-delta reports) eventually has to make sense of, and a slug chosen carelessly is exactly how synonym fragmentation creeps in. Check `gitian-kb://vocab` for an existing slug that already names the concept before typing a new one; only mint when the concept is genuinely absent. `publish_topic` is how a stub stops being one: it attaches a real description (or refreshes an existing one's) — call it when the concept deserves documentation, not to make a link "count", which it never affected. The one slug family that stays inert is a **tombstoned** one: a user veto is never overruled by frontmatter, so the link is stored but excluded from relatedness (advisory `tombstoned_topics` warning) until someone deliberately re-mints it via `publish_topic`.
-- **`category`** — at most one, `null` if none. Pick from `gitian-kb://vocab`'s categories using their routing prompts; an unknown category slug gets the same late-binding treatment (`unknown_category` warning). Categories are authored in the `/kb` UI, not minted over MCP.
-- **Update-over-create bias.** Before minting a brand-new `doc` slug, check whether an existing *active* doc already owns the same primary topics — `list({topic: "<slug>"})` or the `topic` tool's member list — and update that doc instead of publishing a near-duplicate. The server backstops this with an advisory `consider_update` warning on a rev-1 doc mint whose primary topics heavily overlap an existing doc's, but don't rely on the backstop catching everything; check first.
-- **`neighbors`** on a slug returns each hit's `why.topics` (the shared topics driving the score, richest first) and `why.explicit` (non-null when an explicit link floors the weight at 1.0) — use it to understand *why* something surfaced, not just *that* it did.
-- **`topic`** (hub view) and **`publish_topic`**/**`retract_topic`** (mint/update/tombstone) round out the toolset for working with the vocabulary directly — see their tool descriptions for the exact shapes.
-
-## Topic extraction contract
-
-*(Mirrors `EXTRACTION_CONTRACT` in `src/lib/kb/extract/logic.ts` verbatim, so the two modes
-below can't drift on wording.)*
-
-A doc's topic links get populated one of two ways. An owner can opt into server-side Gemini
-extraction — a background pass, gated per-owner, off by default — which enriches
-`kb_topic_links` asynchronously after the doc publishes. Absent that opt-in (the default), it's
-on you: extract topics yourself before calling `publish_doc`.
-
-Read the topic vocabulary first, then prefer linking to an existing topic over minting a new
-one. Assign 1-3 topics as "primary" (what the doc is about) plus any number of "secondary"
-topics (what it merely touches). Mint at most 2 brand-new kebab-case topics, and only when
-nothing in the existing vocabulary fits. Never re-mint a topic a human has retracted
-(tombstoned) — that veto stands even when the topic would otherwise be a perfect fit.
-
-If a `publish_doc` response carries `doc_without_topics`, the doc landed with empty
-`topics`/`mentions` and the owner isn't on server-side extraction — apply the contract above
-(read `gitian-kb://vocab`, link 1-3 existing primaries, mint at most 2 new ones) and re-publish
-the same slug. This is the same linking discipline **Topics & categories** already asks for on
-every publish; the warning only fires when a topic-less doc slips through anyway.
-
-## Schema authority
-
-Installed tool schemas are a cached snapshot, not the live contract — they can lag behind the
-server (a past cache once omitted `summary`/`repo` entirely, so every publish built strictly from
-the cached schema failed `validation_failed`). The live `gitian-kb://format/*` resources and the
-server's own validation errors are always authoritative. If `validation_failed` names a field the
-cached tool schema didn't mention, that isn't a bug in your call — trust the server, add the
-field, and retry.
-
-## Revising an existing item: read, then write
-
-A revision is a **read → edit → write** loop, and the read is not optional: it is where you learn
-both the item's current fields and the `rev` your write has to build on.
-
-### Prove what you read: `base_rev`
-
-Two agents can hold the same item at once, and the loser of that race used to overwrite the winner
-silently. So every write that can *revise* an existing item — `publish_memory` / `publish_doc` /
-`publish_entry`, `patch_doc` / `patch_memory`, and `retract_item` — takes `base_rev`: **the `rev`
-you read before making your change**, from the `get` you just did (or from the response of your own
-last write, which reports the rev it landed). It never appears in frontmatter and never moves
-`body_hash`; an unchanged re-publish with the right `base_rev` still returns `unchanged: true`.
-`append_entry` is the one exemption — it accepts no `base_rev` at all, because its merge is
-union-based and concurrent appends both land.
-
-- **Minting?** Omit it, or pass `base_rev: 0` to assert "this must be a create" — against a slug
-  that already exists, `0` is a `rev_conflict` rather than a silent revision.
-- **Revising?** Pass the rev you actually read on this call. Never a number remembered from earlier
-  in the session, carried over from another item, or incremented by hand.
-- **`base_rev_required`** — the slug already exists and your write didn't say what it was built on.
-  It deliberately carries no `head_rev`: the remedy is the read, not the number. `get` the slug
-  (`include_body: false` is enough), then retry with the `rev` it returned.
-- **`rev_conflict`** — someone landed a revision after your read. It carries `head_rev` (the number
-  to build on now), `head.author_login` (who moved it), `frontmatter_changed` (which fields they
-  touched) and `body_diff` (a unified diff of the body change) — read those first, because a small
-  delta usually needs no second round trip. When they aren't enough — `body_diff` is `null` with an
-  `omitted_reason` of `diff_too_large` or `base_rev_not_found` — `get` the item again. Then
-  **re-apply YOUR change on top of theirs** and retry with
-  `base_rev: <head_rev>`. Never resubmit the identical payload with the new number: that is exactly
-  the lost update the guard exists to prevent, and it deletes whatever they just wrote.
-- A conflict on a doc you didn't write, in an org KB you can write but not read, comes back
-  stripped — `head`, `frontmatter_changed` and `body_diff` all `null`, with
-  `omitted_reason: "read_requires_entitlement"` — while `head_rev` survives so you can still
-  proceed. Re-reading is no help here: a `get` on that item is refused for the same reason. Say
-  plainly that the other revision isn't visible to you rather than guessing at it.
-
-### Patch, don't re-publish
-
-`publish_*` is a full PUT — it requires the entire `body` on every call. That makes it the wrong
-tool for a revision, and not merely a wasteful one: re-emitting a long body is how bodies get
-truncated. Use the patch tools instead.
-
-- **`patch_doc` / `patch_memory`** — `slug` plus only the fields you're changing. Omitted field =
-  unchanged; supplied field = **replaces wholesale**. There is no `body` field on these tools: the
-  server keeps the existing body byte-identical. Use them for status flips, adding `commits`,
-  updating `next_steps`, correcting `files` — every revision that isn't a rewrite.
-- **`body_append`** is the only way a patch touches the body, and it only ever grows it
-  (blank-line separated). An implementation recap appended to a landed doc is exactly this.
-- **Need a list's current contents first?** Replace-wholesale means appending to `related` or
-  `commits` requires knowing what's already there. Read it with `get` and `include_body: false` —
-  a manifest-only read that skips the body entirely. Never rebuild a list from memory.
-- **Entries have no patch tool** — `append_entry` already is one. Omit its `section` to revise
-  only frontmatter and leave the body untouched.
-- **Patch never creates.** An unknown or tombstoned slug returns `not_found`; use `publish_*` to
-  mint or to resurrect.
-- Warnings still apply, computed against the *merged* manifest — patching `status` to `landed`
-  with no commits still raises `landed_without_commits`.
-
-Reserve `publish_doc` / `publish_memory` for rev-1 authorship and genuine full rewrites. If a
-rewrite cuts the body by more than a quarter, the server rejects it with `body_shrank` until you
-re-send with `body_replaced: true` — that guard exists because a truncated body looks exactly
-like a deliberate edit, and it has already destroyed a doc once.
-
-Every write returns `body_length` and `body_hash` (sha256 of the body alone, so frontmatter edits
-never move it). Quote those to confirm a write landed intact — never assert a byte count or an
-"identical" claim you didn't actually compute.
-
-## Publishing rules
-
-- Every schema key must be present in the call — explicit `null` (or `[]` for list fields) when a value is genuinely unknown, never omit the key. A thin publish that drops required keys is rejected.
-- Never write `created_at`, `updated_at`, `rev`, or `author` yourself — the platform stamps these from the token and the revision; they aren't yours to set.
-- Slugs are stable, lowercase-kebab, and name the thing (`auth-token-nullable`, not `note-1`). Entries are the exception: they take `date` + `scope`, never a slug — the platform derives one from both.
-- Slugs share one namespace per KB across all three primitives — a `memory` and a `doc` can't reuse the same slug. Pick something specific enough not to collide, and `search` first so you don't collide silently.
-- An identical re-publish returns `unchanged: true`. That is success, not an error — don't retry it or treat it as a failure.
-- **Populate frontmatter — don't default to null.** `project`, `repo`, and `tags` must be filled whenever they're derivable, not left null out of habit. The SessionStart hook context (repo, branch, date) gives you what you need for `repo` at the top of the session; set `project` from the obvious repo/workspace name. Explicit `null` is only for work that's genuinely not project- or repo-bound — never a shortcut. Always include `summary`, especially on memories, where it's the only preview a list view shows.
-- `warnings` on a successful publish are advice to act on, not blockers. Twenty-two codes:
-  - `no_tags` — no tags supplied; add 1-3 to aid retrieval
-  - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
-  - `no_repo` — `repo` is null; derive it from `git remote get-url origin` (the SessionStart hook already surfaces this) or confirm the work isn't repo-bound
-  - `landed_without_commits` — `status: landed` but `commits` is empty; add the landing commit(s)/PR
-  - `impl_done_status_open` — `impl_status: done` but `status` is still draft/designing/in-progress/blocked; reconcile before closing out
-  - `terminal_with_next_steps` — `status` is terminal but `next_steps` is non-empty; confirm they still apply
-  - `plan_without_files` — an active plan with a `repo` but empty `files`; declare the paths the plan will touch (trailing `/` = subtree) so parallel agents can detect contention
-  - `organic_topics_minted` — a `topics`/`mentions` slug wasn't a live topic yet; it auto-minted as an undescribed stub and is already live in relatedness — informational, not a problem to fix, but worth a glance: confirm it names a genuine new concept rather than a typo of an existing slug
-  - `tombstoned_topics` — a `topics`/`mentions` slug names a topic a human tombstoned (vetoed); the link is stored but excluded from relatedness until it's deliberately re-minted via `publish_topic`
-  - `unknown_category` — `category` isn't a live category slug; stored but inert until it's minted (`/kb` UI) or fixed
-  - `links_update_failed` — the topic/item-link index itself failed to write (distinct from an unknown slug); re-publish (even unchanged) to repair
-  - `intents_update_failed` — the file-intents index failed to write; re-publish (even unchanged) to repair
-  - `org_kb_available` — a **`kb`-less** write landed in your `home` KB while its `repo` belongs to a gitian **org whose `team` KB you can publish into**, and nothing was rerouted: routing is switched off for you, or the primitive never routes (a memory). Personal-KB items about an org repo are invisible to teammates (see **Org KBs** under **Targeting a KB** above). If this is team work, re-publish — or `append_entry` — with `kb` set to the `<org>/team` address the note names; if it's genuinely personal, pass `kb` explicitly — `"home"` if it is personal — and the advisory goes away
-  - `repo_missing_cannot_route` — a `publish_doc`/`publish_entry`/`append_entry` that **created** an item while passing neither `kb` nor `repo`, from a caller who routes to at least one org `team` KB (the note names them). Routing is computed from `repo`, so this write could not route and landed in `home`. Set `repo` to the normalized `owner/name` (rule 3 under **Targeting a KB**) so team work routes there, or pass `kb: "home"` to state the item is personal — either one silences it
-  - `slug_exists_in_other_kb` — a `kb`-less create landed in `home` while that slug already exists in another KB you can write (usually the org's `team` KB — i.e. the item you probably meant to revise). Don't leave a second copy: read the existing one and revise it there with `kb` + `base_rev`, or confirm this really is a separate personal item
-  - `kb_read_paywalled` — (every routed write: `publish_doc`/`publish_entry`/`append_entry`/`patch_doc`) the write was ROUTED into an org `team` KB you can write but not read, because the org has no live subscription. It landed and stays readable to you — you wrote it; a `get` on a *teammate's* item there answers `read_requires_entitlement` until the org subscribes. Nothing to fix — the response's `routed_to` names where it went
-  - `consider_update` — a rev-1 doc mint shares primary topics with an existing active doc; check whether you should be updating that doc instead — see **Topics & categories**
-  - `no_topics` — `topics` is empty on a doc/memory publish (entries are exempt); link 1-3 existing topics (see `gitian-kb://vocab`) or mint a genuine new concept
-  - `doc_without_topics` — a `publish_doc` landed with no `topics`/`mentions` at all and the owner isn't on server-side extraction; apply the **Topic extraction contract** above and re-publish
-  - `project_name_topic` — a `topics`/`mentions` slug just repeats `project` or the repo basename; it adds near-zero relatedness signal (every item in the project/repo would carry it) — link a concept topic instead
-  - `undescribed_topics_minted` — the subset of this publish's `organic_topics_minted` slugs whose topic still has no description; call `publish_topic` on each now while the context is fresh
-  - `body_shrank` — the body you sent is more than 10% shorter than the stored one. Treat this as a truncation alarm, not a formality: compare `body_hash` in the response against what you expected, and if you didn't mean to cut the body, re-read the head revision and republish it in full. Past 25% (and more than 2000 characters) the publish is **rejected** outright with a `body_shrank` error instead — acknowledge a deliberate rewrite with `body_replaced: true`, or avoid the whole problem by using `patch_doc`/`patch_memory`, which never send a body at all
-- On `validation_failed`, fix every listed `issue` and retry — the error's `format_resource` field names the exact guide to re-read.
-- On `base_rev_required`, don't re-send the same call: the slug already exists and your write never said which revision it was built on. `get` it (`include_body: false` is enough) and retry with `base_rev` set to the `rev` you read — see **Revising an existing item** above.
-- On `rev_conflict`, re-apply your change on top of the new head — reading `head_rev`, `head.author_login`, `frontmatter_changed` and `body_diff` off the error, re-reading the item when those aren't enough — then retry with `base_rev: <head_rev>`. Never resubmit the same payload with the new number; that silently deletes the revision you collided with.
-- `contention` on a successful `publish_doc` means another active doc declares overlapping `files` — read it (`get`), coordinate or narrow scope, and cross-link it in `related`. Contention is scanned within the KB you published into: teammates contend with each other because they publish into the same **org KB**, not because a read reached across owners.
-- `body` is distilled content — decisions made, the rationale behind them, alternatives considered and rejected — not a transcript of the conversation or a chronological log of messages. Write what a future reader needs to understand and trust the outcome.
-- Set `repo` to the working repository as `owner/name` (derive it from `git remote get-url origin`); explicit `null` when the work isn't repo-bound or there's no remote — never guess. The repo doesn't need to be connected to gitian; identity is late-binding.
-
-## Writing bodies
-
-Bodies are Obsidian-flavored intent documentation — why the thing is the way it is, not a transcript. Link related KB items inline with `[[slug]]` wikilinks (they resolve in the UI and add a direct, always-1.0 relatedness link between the two items — stronger than any topic overlap), structure with headings, and include short code snippets where they say it better than prose. A wikilink can also cross KBs: `[[kb-slug/item-slug]]` is resolved relative to the reader (your own KB of that name wins; ambiguous across two linked KBs renders as a dangling link rather than a guess) and `[[login/kb-slug/item-slug]]` names a linked KB's item exactly — prefer the qualified three-segment form when you're writing about a linked KB's item, for the same reason you pass a qualified `kb` back verbatim. Reference code where the knowledge lives: in a repo already instrumented with gitian docs (a `.gitian/` config directory, `@gitian` annotations, paired `docs/` files), point at those anchors — an annotation id, a doc path — instead of duplicating their content; in any other repo, reference files and symbols plainly. **Never add `@gitian` annotations or any gitian markup to a codebase that isn't already using the gitian docs system** — publishing to the KB never licenses editing code comments; in-code instrumentation is opt-in via the gitian-docs plugin only.
-
-## Terminal-state discipline
-
-Before telling the user work is done, abandoned, or paused, re-publish the governing doc with the updated `status` (and `impl_status`) — the platform stamps `updated_at` for you, so this is the only step you owe it. A landed feature gets **both** the status flip and a `recap` doc; shipping one without the other leaves the KB half-updated and misleads whoever reads it next.
-
-Worked example: a feature branch merges. Re-publish the design/plan doc's slug — the full manifest again, with `status: landed`, `impl_status: done`, `commits: [<sha>]` updated — then `publish_doc` a new `type: recap` covering what shipped, the key decisions, gotchas discovered, and any deferred follow-ups.
-
-## The journal is a running record (entries)
-
-The day's entry is a running record of meaningful events, appended to as they happen — not a day's-end summary gated behind a whole-day bar. When something meaningful happens mid-session — a feature lands, a real blocker appears, a decision settles, a finding surfaces, or the conversation pivots off a thread — fold it in. One entry exists per scope per day.
-
-**`append_entry` is the primary journaling verb** — the default way to add to today's entry, every time. It's a small, targeted call (`date`/`scope` optional, default today UTC/`work`) that creates the entry if none exists yet or appends `section` to the body if one does, union-merging `tags`/`topics`/`mentions`/`commits`/`related` along the way, without re-sending the whole body — and it's atomic against concurrent writers (two agents appending to the same day's entry both land, neither clobbers the other). Reach for `publish_entry` only for a genuine full rewrite of the day's entry — correcting or restructuring what's already there — not as the everyday path.
-
-An entry routes by `repo` exactly like a doc (rule 2 under **Targeting a KB**), so the team journal of an org repo belongs in `<org>/team` — set `kb` explicitly when the user named that KB, check `landed_in` on every append, and move a misplaced entry with an `append_entry` carrying `kb`, never a whole-body re-publish.
-
-The bar for "meaningful" is what a teammate would care to hear at standup — a pivot, a diagnosis, a settled design all clear it; routine mechanical work (a rename, a re-run, a dependency bump) does not. The journal records the day a colleague would want to catch up on, not a command log.
-
-## Never auto-publish
-
-Publish at natural completion points or on explicit user intent, full stop. Never publish silently, never in bulk, and never mid-task on a timer — the meaningful-event bar and the discipline above only hold if every publish is a deliberate call, not a background habit.
-
-Natural completion points: a design conversation converges, a plan is finished and about to be handed to implementation, a feature merges, a work session wraps up worth an entry, the conversation pivots off a thread, or a compaction has just squashed (or a manual `/compact` is about to squash) undistilled context. If none of those has happened, don't publish yet — keep working and revisit the trigger table later.
+A subagent cannot spawn a subagent. If you are one (or dispatching is unavailable), read
+`references/authoring.md` beside this file and work inline. Also there: `kb-targeting.md` (the `kb`
+argument, routing, linked and org KBs), `topics.md` (topics, mentions, categories),
+`spec-authoring.md` (manifests, the recap checklist). Companions: **gitian-spec** owns
+spec/plan/design *requests*, **gitian-docs** annotations.
 
 ## The nudge layer
 
-Underneath this skill, the plugin also runs a client-side nudge layer: hooks (`hooks/*.sh`, POSIX
-sh delegating all JSON work to python3, no `jq`) passively harvest MCP traffic into a local
-observation cache (`~/.claude/gitian-kb/state.json`, overridable via `GITIAN_KB_STATE_FILE`) and
-use it to fire advisory nudges reinforcing the discipline above. This is local scaffolding, not
-server enforcement: every nudge fires at most once per session (an epoch reset on `/clear` re-arms
-them) except the stateless routing guard (nudge 4), which fires whenever its precondition is unmet,
-every hook is fail-open (bad input, corrupt state, a missing `python3` — anything — falls
-through to silence, never a partial nudge, never a non-zero exit), and a session that follows this
-skill from the start is **silent when compliant** — zero nudge output, by design. That silence is
-the release invariant, not an absence of coverage.
-
-The nine nudges:
-
-1. **Session-start vocab digest** (SessionStart) — on startup/clear/compact, a short digest of the
-   cached vocab (topic count, any undescribed stubs) when the cache already has one; on
-   resume, zero/one/two lines noting a moved vocab revision and/or a stale (>12h) session record.
-   Silent whenever there's nothing worth reporting.
-2. **Orientation check** (PreToolUse on `Edit`/`Write`/`NotebookEdit`) — denies once, advisory, if
-   this session's first file mutation happens with zero gitian KB reads recorded yet: a reminder to
-   `file_intents`/`search`/`neighbors` before touching paths a plan elsewhere may already claim.
-   States explicitly that the denial is advisory and re-sending the identical call passes through
-   untouched.
-3. **Publish lint** (PreToolUse on `publish_doc`/`publish_memory`/`publish_entry`/`append_entry`) —
-   a client-side echo of the server's own lint (empty `topics`, a project/repo-name topic, a
-   near-miss slug against the cached vocab) fired before the call ever reaches the server. The hook
-   hashes the intercepted call, so an identical re-send passes untouched; `append_entry` is exempt
-   from the empty-topics check on append, same as the server (linted only on create).
-4. **Routing guard** (PreToolUse on `publish_doc`/`publish_entry`/`append_entry`) — stateless and
-   deterministic, not once-per-session: it denies a write passing **neither `kb` nor `repo`** (such
-   a write cannot route, so it lands in `home`) and names the `repo` to set; an explicit `kb` —
-   `"home"` for personal work — satisfies it too. Silent for memories, `patch_*`/`retract_*`, and
-   for any write already carrying one of the two fields.
-5. **Commit-nudge** (PostToolUse on `Bash`) — once per session, if a real commit (or `gh pr merge`)
-   lands with no `append_entry`/journal activity in the last 2 hours, an advisory reminder to
-   journal it. Silent whenever that 2h damper is already satisfied.
-6. **Stop publish-reminder** (Stop) — once per session, blocks-with-reason if this turn crossed the
-   "substantial work" line (≥3 `Edit`/`Write` or ≥1 commit in the transcript) with zero gitian
-   publish/append calls anywhere. Always silent on a resumed `stop_hook_active` pass (loop guard) or
-   whenever something was actually published.
-7. **Mint follow-up** (PostToolUse, riding the same harvest pass as vocab caching) — the first time
-   a session sees a given auto-minted, undescribed topic slug in a response's
-   `organic_topics_minted` warning, one line naming it and pointing at an immediate `publish_topic`
-   call; silent on every later repeat of a slug already prompted this session.
-8. **Server warnings** — `no_topics`, `project_name_topic`, and `undescribed_topics_minted` (see
-   **Publishing rules** below) are advisory, never rejections — the client-side lint (nudge 3)
-   usually catches the same conditions earlier, before the round trip even happens.
-9. **`/gitian-kb:status`** — run any time to inspect the cache directly: per-server vocab
-   revision/age/topic count/undescribed topics, last publish/append times, the current session's
-   counters, and which once-per-session flags have already fired this epoch. Read-only, never
-   modifies state.
-
-None of this should surprise an agent mid-session: a nudge names itself as advisory, says what to
-do next, and — except for the deny-once orientation check, the routing guard, and the block-once
-stop reminder, all of which say so — never stops you from proceeding.
+Hooks nudge off harvested MCP traffic — advisory, fail-open, **silent when compliant**, satisfied
+by a brief you dispatched; `/gitian-kb:status` inspects them. One is a hard precondition: a doc or
+journal-entry write carrying neither `kb` nor `repo` is refused, since it could only land in `home`.

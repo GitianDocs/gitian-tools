@@ -8,8 +8,11 @@ allowed-tools: Bash(git remote get-url:*), Bash(git branch:*), Bash(git rev-pars
 
 Long-form work documents — specs, plans, designs, brainstorms, handoffs, session notes, recaps —
 are KB deliverables, not files. When someone asks for a design doc, the deliverable is a published
-KB doc and its URL, never a loose markdown file in the repo or a vault. This skill is the
-authoring discipline; the companion gitian-kb plugin owns the connection and the publishing rules.
+KB doc and its URL, never a loose markdown file in the repo or a vault.
+
+**You don't type the doc: you brief the scribe.** The design is already in this conversation, so
+re-emitting it on the orchestrating model is pure duplication. Your job is to scan the KB, hand
+`kb-scribe` a brief plus the session transcript, and check what came back.
 
 ## Preloaded context
 
@@ -26,7 +29,7 @@ authoring discipline; the companion gitian-kb plugin owns the connection and the
   design, brainstorm, handoff, or session note, or a landed feature needs its shipped state
   documented.
 - **gitian-kb** — orientation (RAG at work-start), completion-point distillation, the journal,
-  and memories.
+  memories, and the two subagents: `kb-librarian` (reads) and `kb-scribe` (every write).
 
 gitian-kb is a **required companion**: gitian-spec deliberately ships no MCP config of its own,
 so the `gitian` tools this skill authors through (`search`, `neighbors`, `get`, `history`,
@@ -36,29 +39,46 @@ gitian-kb's publishing rules apply here unchanged and by reference: full-manifes
 (explicit `null`/`[]`, keys never omitted), revising an existing doc passes
 `base_rev` from the `get` you just made (omit it and the write is refused with
 `base_rev_required`; a stale one comes back as `rev_conflict`, to be re-read and re-applied,
-never resubmitted with the number swapped), schema
-authority (live `gitian-kb://format/*` resources beat cached tool schemas), `warnings` are
-advice to act on, and never auto-publish. An explicit authoring request ("write me a design doc
-for X") *is* explicit publish intent — author, publish, surface the returned url. Don't restate
-the schema from memory: read `gitian-kb://format/doc` (or `gitian-kb://format/entry`) before the
-first publish of a session.
+never resubmitted with the number swapped), mid-body revisions go through `body_edits` rather
+than a re-published body, schema authority (live `gitian-kb://format/*` resources beat cached tool
+schemas), `warnings` are advice to act on, and never auto-publish. An explicit authoring request
+("write me a design doc for X") *is* explicit publish intent — scan, brief, surface the returned
+url.
+
+## The flow
+
+1. **Scan** (below) — yours, or `kb-librarian`'s if it is several calls deep.
+2. **Surface findings** to the user in one short paragraph *before* the doc is written: "I found N
+   related artifacts: … most relevant are …".
+3. **Brief `kb-scribe`** in the background — the brief template lives in the gitian-kb skill. For a
+   spec-class doc, always include the session **transcript path and the transcript-extract command**
+   from the session context: that is what lets the scribe author the design instead of you retyping
+   it. Name the `type`, the slug (when revising), the decisions *with the why*, the rejected
+   alternatives, the manifest facts below, and — explicitly — any terminal flip.
+4. **Read back** the scribe's report: `slug rev N → url`, the published `summary`, the heading
+   outline, `warnings` verbatim. That is the read-back for a spec-class doc — you do not re-read
+   the body. Surface the url. A correction goes back to the same scribe via `SendMessage`; it
+   applies it with `body_edits`.
+
+One scribe at a time. A `NEEDS SIGN-OFF` report means nothing was published and the scribe needs
+one answer — give it, don't re-brief.
 
 ## Scan before you write
 
-Never draft into a vacuum. Before writing anything:
+Never draft into a vacuum. Before briefing:
 
 1. `search` the KB for the topic (plus `list` when the corpus is small), then `neighbors` on the
    best hit — its topic-derived neighborhood surfaces adjacent decisions keyword search misses.
 2. Read the plausibly-related artifacts with `get` — frontmatter plus opening section, not
    filename-guessing. Cap the scan at ~5 artifacts; when more match, pick the 2-3 most relevant.
-3. Surface findings to the user in one short paragraph *before* drafting: "I found N related
-   artifacts: … most relevant are …".
-4. **Adopt, don't re-litigate.** A decision resolved in a prior spec is a precondition, not an
-   open question — unless the user explicitly reopens it.
-5. Cross-link every genuinely related artifact: its slug in `related`, a `[[slug]]` wikilink in
-   the body where the connection is load-bearing.
-6. Flag stale manifests you trip over (status says in-progress, the work clearly landed) and
-   offer to fix them.
+3. **Adopt, don't re-litigate.** A decision resolved in a prior spec is a precondition, not an
+   open question — unless the user explicitly reopens it. Say so in the brief.
+4. Every genuinely related artifact goes in the brief as a cross-link: its slug for `related`, and
+   where the connection is load-bearing, a `[[slug]]` wikilink in the body.
+5. Flag stale manifests you trip over (status says in-progress, the work clearly landed) and offer
+   to fix them — a fix is its own brief.
+6. Before a plan, check `file_intents` for the repo — on overlap, `get` the contending doc and pass
+   it to the scribe for `related`.
 
 ## Choosing the shape
 
@@ -68,7 +88,7 @@ Never draft into a vacuum. Before writing anything:
 | Brainstorm | `publish_doc`, `type: design`, `status: draft` |
 | Handoff | `publish_doc`, `type: handoff` |
 | Session notes / what happened today | `append_entry` (`scope: work`) — or a `type: handoff` doc if it must carry a manifest; `publish_entry` only for a full rewrite of an existing entry |
-| Progress update on existing work | revise the **same** doc slug (`patch_doc`, or a full re-publish, either one carrying `base_rev`) — revisions are the progress trail; never mint `-v2` slugs |
+| Progress update on existing work | revise the **same** doc slug (`patch_doc`, carrying `base_rev`) — revisions are the progress trail; never mint `-v2` slugs |
 | What a landed feature shipped | implementation recap (below) + the terminal status flip |
 
 Promoting a session into a feature: mint a doc slug for the feature and cross-link today's entry
@@ -76,103 +96,51 @@ Promoting a session into a feature: mint a doc slug for the feature and cross-li
 have no good `type` yet — say so, pick the least-bad fit (`design`), and don't invent enum
 values.
 
-## Deriving the manifest
+## Manifest facts the brief must carry
 
-The authority for fields and enums is `gitian-kb://format/doc` — do not add fields beyond it.
-The rules the schema can't express:
+The authority for fields and enums is `gitian-kb://format/doc` (or `gitian-kb://format/entry`) and
+the scribe reads it. What it cannot derive without you:
 
-- `project` derives from the working directory — never from the doc title or a pre-existing
-  value. Sibling worktrees (`repo-feature`) share the parent repo's project. Closely named repos
-  (`minga` vs `minga-platform`) are distinct projects: exact basename, never a prefix match.
-- `repo` from `git remote get-url origin`, normalized to `owner/name`; explicit `null` if none.
-- `status` is the DOCUMENT's lifecycle; `impl_status` is the CODE's. They legitimately diverge —
-  a spec can be `landed` while `impl_status` is still `in-progress`.
-- `branch`/`worktree` are the code's location at write time — from
-  `git rev-parse --abbrev-ref HEAD` / `git worktree list`; `null` plus `n/a` statuses when not
-  in a repo. Never trust remembered values.
-- `next_steps` in imperative voice ("Land the auth PR"), never questions — it is the
-  agent-facing TODO list. `blockers` = anything preventing forward motion; `[]` if none.
-- Dates from the system clock, never memory; convert relative dates ("Tuesday") to absolute
-  YYYY-MM-DD.
-- `files` — the repo-relative paths the work will touch, from the plan's own Files sections or
-  `git diff --name-only`, never memory; a trailing `/` claims a subtree; `[]` only when the doc
-  isn't code-shaped. Before publishing a plan, check `file_intents` for the repo — on overlap,
-  `get` the contending doc (pass its `owner` login when the hit carries one — a teammate's plan
-  on a shared org repo, not your own) and cross-link it in `related`.
-- `topics`/`mentions` — derive from the work's actual subject matter (what the doc is *about*
-  vs. what it merely *touches*), never invented and never padded to hit a count. Read
-  `gitian-kb://vocab` first and link an existing topic over minting a near-duplicate; 1-3
-  primaries is the advised ceiling, not a target to fill. Before minting a brand-new doc slug,
-  check whether an existing active doc already owns the same primary topics (`list({topic:
-  "<slug>"})` or the `topic` tool) and update that doc instead — the update-over-create bias
-  gitian-kb's skill teaches, backstopped server-side by the `consider_update` warning.
-- `category` — at most one, chosen from `gitian-kb://vocab`'s categories via the user's routing
-  prompts, never guessed from the doc type; `null` when nothing in the vocabulary fits.
+- `kb` — the target, never blank: the KB the human named, else the `kb` label of the hit being
+  revised, else `auto` (let `repo` routing decide).
+- `project` from the working directory — never the doc title. Sibling worktrees (`repo-feature`)
+  share the parent repo's project; closely named repos (`minga` vs `minga-platform`) are distinct
+  projects: exact basename, never a prefix match.
+- `repo` from `git remote get-url origin` as `owner/name`; explicit `null` if none.
+- `status` is the DOCUMENT's lifecycle, `impl_status` the CODE's — they legitimately diverge.
+- `branch`/`worktree` from the context above, not from memory; `null` plus `n/a` outside a repo.
+- `next_steps` imperative ("Land the auth PR"), never questions; `blockers` = what blocks motion.
+- `files` — the repo-relative paths the work will touch (trailing `/` claims a subtree), from the
+  plan's own Files sections or `git diff --name-only`, never memory.
+- Dates absolute (YYYY-MM-DD) from the clock; relative dates converted before they reach the brief.
+- Topic slugs only when a genuinely new concept needs minting — otherwise the scribe links existing
+  vocabulary and flags a gap.
 
-## Updating an existing doc
+## Commits list and the implementation recap
 
-`get` the full doc first; skim `history` if you didn't write it. Re-derive every manifest field
-from ground truth — pre-existing values go stale (dead branches, statuses nobody flipped). Only
-`started` is immutable history. Re-publishing the same slug appends a revision.
+`commits` items are `<7-char-sha>  <subject>` — two spaces, both parts, chronological oldest
+first, append-only, derived from `git log --oneline` above rather than memory. A squash-merge lists
+the single squash commit.
 
-## Terminal-state discipline
+A recap is required when a feature reaches `impl_status: done` and refreshed when it lands.
+Default placement: a `## Implementation recap` section appended to the canonical doc's body; only
+spin off a separate `type: recap` doc past ~800 words, cross-linked both ways via `related`.
+Sessions get a short Findings/Outcome section in the entry, never a separate recap. The full
+14-point checklist (schema, API surface, eventing, deferred items, …) lives with the scribe, in the
+gitian-kb skill's `references/spec-authoring.md` — ask for depth scaled to surface area: one
+paragraph for a bugfix, the whole checklist for multi-service, schema, or API work.
+`/gitian-spec:recap` runs this close-out end to end.
 
-Non-negotiable, shared with gitian-kb: when work reaches a terminal state, update the manifest
-BEFORE considering the task complete. Field-level expectations:
+## When you cannot brief a scribe
 
-- **Landed** — `status: landed`, `impl_status: done`, `landed` date set,
-  `branch_status: merged`, `worktree_status` reflecting reality (removed or active),
-  `next_steps: []` (or only surviving follow-ups), `blockers: []`, `commits` populated. A landed
-  doc with empty commits is a manifest bug (the server warns: `landed_without_commits`).
-- **Abandoned** — `status: abandoned`, `impl_status: reverted` or `n/a`, the one-line why in
-  `summary`.
-- **Paused / blocked** — the reason in `blockers`; never leave a stalled doc looking active.
-
-## Commits list
-
-Populate when work lands (or incrementally as commits accrue). Each item is
-`<7-char-sha>  <subject>` — two spaces between, both parts required. Chronological, oldest
-first. Append-only: never reorder. A squash-merge lists the single squash commit; a multi-branch
-feature lists all commits chronologically regardless of branch. Derived from
-`git log --oneline`, never from memory.
-
-## Implementation recap
-
-Required when a feature reaches `impl_status: done` (even if unmerged); refreshed when it lands.
-Default placement: append a `## Implementation recap` section to the canonical doc's body. Only
-spin off a separate `type: recap` doc when the recap exceeds ~800 words — then cross-link both
-ways via `related`. Sessions get a short Findings/Outcome section in the entry, never a separate
-recap.
-
-Scale depth to surface area — a bugfix gets one paragraph (root cause + fix); multi-service,
-schema, or API work gets the full checklist:
-
-1. **Mental model** — one paragraph: what shape it took, where it lives.
-2. **Schema changes** — every migration chronologically, exact table/column/FK names; state
-   "none" explicitly.
-3. **Proto/IDL changes** — every new or extended message (field names + numbers), every new RPC.
-4. **Domain layer** — new/extended types, constants, validation.
-5. **Data layer** — new repo methods with signatures, codegen notes.
-6. **API surface** — EVERY endpoint/RPC: name + signature, one-line semantics, auth/role
-   requirements, side effects. Never abbreviate this section — it is the highest-leverage
-   information for future readers.
-7. **Eventing** — subjects emitted/consumed, wiring location, atomicity gaps.
-8. **Integration touchpoints** — which services/packages, via what (RPC, events, shared DB),
-   inversion-of-control gotchas.
-9. **Test coverage** — a line per test package: status + what it covers.
-10. **Commits** — full chronological list with one-line subjects.
-11. **Deferred items** — distinguish "designed away" from "tracked for v2".
-12. **Known issues / housekeeping** — pre-existing bugs found, config weirdness, anything a
-    future agent will trip over.
-13. **Hard prerequisites for activation** — shipped-but-dormant conditions.
-14. **What's next** — concrete, imperative.
-
-Style: tables for migration/RPC/event lists; exact identifiers (future agents grep for them);
-describe what shipped, not why (the design above covers why); no editorializing — an honest
-"known atomicity gap" beats "this is solid".
+A subagent cannot spawn a subagent, and dispatching may be unavailable. Then author inline: load
+the `gitian-kb` skill and read its `references/authoring.md` (the publishing discipline) and
+`references/spec-authoring.md` (manifest derivation and the recap checklist), and publish yourself.
 
 ## Output rules
 
 Manifest completeness over prose. Bodies are distilled intent documentation — Obsidian-flavored,
 `[[slug]]` wikilinks, per gitian-kb's writing-bodies rules (including never injecting `@gitian`
-markup into a codebase that hasn't opted into the gitian docs system) — not transcripts.
+markup into a codebase that hasn't opted into the gitian docs system) — not transcripts. Hold the
+scribe to that when you read its report: a body that reads as a conversation log is a re-brief, not
+a fix to make yourself.

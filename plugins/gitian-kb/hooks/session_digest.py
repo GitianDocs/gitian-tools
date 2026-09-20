@@ -5,16 +5,15 @@ Invoked by session-context.sh as `python3 session_digest.py <source> <session_id
 SessionStart. Computes the one bit of source-profile-dependent text that isn't part of the
 otherwise-static context session-context.sh already builds:
 
-  - startup / clear / compact: a vocab digest -- a header line plus up to MAX_DIGEST_LINES
-    "- slug - description (degree N)" lines (empty description -> "(no description yet)"),
-    plus a "...and N more" line when the cache holds more topics than that. Omitted entirely
-    (not even a header) when the cache has no topics for this server yet.
+  - startup / clear / compact: nothing. [[kb-scribe-delegation]] retired the vocab digest that
+    used to go here: kb-scribe reads the vocabulary itself before it links or mints a topic, so
+    injecting up to 25 "- slug - description (degree N)" lines into the PRIMARY paid for a read
+    the primary no longer makes. The lastSeenVocabRev stamping below is unaffected.
   - resume: zero, one, or both of -- (a) a line noting the server's vocab revision moved past
-    what this session last saw, with instruction to re-read gitian-kb://vocab before the next
-    publish, and (b) a line noting the session record is stale (>STALE_SESSION_HOURS old), as a
-    nudge that the journal is a per-day running record and days may have rolled over. No digest
-    on resume -- flags survive a resume (session-context.sh never bumps the epoch for it), so a
-    full digest replay would be redundant with what startup/clear/compact already showed.
+    what this session last saw, pointing at a kb-librarian vocab-delta refresh before the next
+    brief (the librarian, not the primary, is what reads the vocabulary now), and (b) a line
+    noting the session record is stale (>STALE_SESSION_HOURS old), as a nudge that the journal
+    is a per-day running record and a journal brief now likely starts a new day's entry.
 
 An unrecognized/missing source is treated like startup. Every source, after computing its text,
 best-effort stamps sessions.<sid>.lastSeenVocabRev[server_key][kb_slug] to the cache's current
@@ -57,7 +56,6 @@ from datetime import datetime, timezone
 # same as harvest.py does (see its own docstring for the same note).
 import state as state_mod
 
-MAX_DIGEST_LINES = 25
 STALE_SESSION_HOURS = 12
 KNOWN_SOURCES = ("startup", "resume", "clear", "compact")
 # Multi-KB phase 1 default bucket for lastSeenVocabRev[server_key][...] -- this script has no
@@ -112,40 +110,6 @@ def _escape(text):
     return json.dumps(text)[1:-1]
 
 
-def _topic_line(topic):
-    slug = topic.get("slug")
-    description = topic.get("description") or "(no description yet)"
-    degree = _as_number(topic.get("degree"))
-    return "- %s - %s (degree %s)" % (slug, description, _fmt_number(degree if degree is not None else 0))
-
-
-def _digest_text(server):
-    """The vocab digest block, or None when the cache has no topics for this server at all --
-    no placeholder text in that case, the tail is simply absent."""
-    topics = server.get("topics")
-    if not isinstance(topics, list):
-        return None
-    valid = [t for t in topics if isinstance(t, dict) and isinstance(t.get("slug"), str) and t.get("slug")]
-    if not valid:
-        return None
-
-    vocab_rev = _as_number(server.get("vocabRev"))
-    fetched_at = server.get("vocabFetchedAt") or "unknown"
-    lines = [
-        "KB vocab digest (as of vocab_rev %s, harvested %s):"
-        % (_fmt_number(vocab_rev if vocab_rev is not None else 0), fetched_at)
-    ]
-
-    shown = valid[:MAX_DIGEST_LINES]
-    lines.extend(_topic_line(topic) for topic in shown)
-
-    remaining = len(valid) - len(shown)
-    if remaining > 0:
-        lines.append("...and %d more" % remaining)
-
-    return "\n".join(lines)
-
-
 def _last_seen_vocab_rev(session, server_key, kb_slug=DEFAULT_KB_SLUG):
     """Read sessions.<sid>.lastSeenVocabRev[server_key][kb_slug] -- the nested per-(server, kb)
     shape (see state.py's _SESSION_DEFAULTS). Missing at any level -- never seen yet, or a legacy
@@ -171,8 +135,9 @@ def _resume_text(server, session, server_key):
     # "None -> 5" line.
     if cache_rev is not None and last_seen is not None and cache_rev > last_seen:
         lines.append(
-            "KB vocabulary moved since you last looked (vocab_rev %s -> %s) -- re-read "
-            "gitian-kb://vocab before your next publish." % (_fmt_number(last_seen), _fmt_number(cache_rev))
+            "KB vocabulary moved since you last looked (vocab_rev %s -> %s) -- dispatch "
+            "kb-librarian for a vocab-delta refresh before your next brief."
+            % (_fmt_number(last_seen), _fmt_number(cache_rev))
         )
 
     updated_at = _parse_iso(session.get("updatedAt"))
@@ -181,7 +146,8 @@ def _resume_text(server, session, server_key):
         if age_hours > STALE_SESSION_HOURS:
             lines.append(
                 "This session's KB activity is over %dh old -- the journal is a per-day "
-                "running record, so days may have rolled over since." % STALE_SESSION_HOURS
+                "running record, so a journal brief now likely starts a new day's entry."
+                % STALE_SESSION_HOURS
             )
 
     if not lines:
@@ -221,8 +187,9 @@ def _record_seen_vocab_rev(sid, server_key, cache_rev, kb_slug=DEFAULT_KB_SLUG):
 
 def build(source, sid):
     """Pure-ish: reads current state (no lock -- see module docstring) and returns the text to
-    append, or None. The one side effect (recording lastSeenVocabRev) happens here too, since
-    "has this session now seen the digest/delta" is exactly what this function just decided."""
+    append, or None (which is EVERY source but resume now that the digest is retired). The one
+    side effect (recording lastSeenVocabRev) happens here too, since "has this session now seen
+    the vocabulary's current revision" is exactly what this function just decided."""
     if source not in KNOWN_SOURCES:
         source = "startup"
 
@@ -238,10 +205,7 @@ def build(source, sid):
     session = sessions.get(sid) if sid else None
     session = session if isinstance(session, dict) else {}
 
-    if source == "resume":
-        text = _resume_text(server, session, server_key)
-    else:
-        text = _digest_text(server)
+    text = _resume_text(server, session, server_key) if source == "resume" else None
 
     _record_seen_vocab_rev(sid, server_key, _as_number(server.get("vocabRev")))
 

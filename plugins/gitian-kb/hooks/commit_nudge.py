@@ -5,9 +5,12 @@ Invoked by commit-nudge.sh (itself a PostToolUse hook matching "Bash"). Fires, a
 session, an advisory nudge when a Bash call that actually performed a commit action (a real
 `git ... commit` invocation, or `gh pr merge`) just succeeded and no journal append
 (`append_entry` / `publish_entry`) has landed on any tracked server in the last two hours (the
-commit-nudge damper, pinned decision 7). The nudge tells the model to consider `append_entry` if
-the commit clears the gitian-kb skill's meaningful-event bar -- it is advisory, never a
-rejection, and never fires twice in the same session (state.py's per-session flags substrate).
+commit-nudge damper, pinned decision 7). The nudge tells the model to brief kb-scribe if the
+commit clears the gitian-kb skill's meaningful-event bar -- it is advisory, never a rejection,
+and never fires twice in the same session (state.py's per-session flags substrate). The damper
+reads `lastAppendAt`, which harvest.py stamps for a BACKGROUND scribe's append too (subagent MCP
+traffic fires these hooks under the parent's session id), so a delegated journal append quiets
+this nudge exactly as an inline one always did.
 
 Guard order (silent no-op on any failure of any of these):
   1. tool_name must be "Bash" (the hooks.json matcher is only a coarse pre-filter, same
@@ -228,9 +231,9 @@ def _flag_once(path, sid):
 
 NUDGE_TEXT = (
     "gitian-kb: a commit just landed and no journal append has happened in the last 2 hours. "
-    "If this clears the meaningful-event bar in the gitian-kb skill's trigger table, record it "
-    "now with append_entry (or publish_entry for a new entry). Advisory only -- fires once per "
-    "session."
+    "If this clears the meaningful-event bar in the gitian-kb skill's trigger table, brief "
+    "kb-scribe (background) with the commit and what it settled -- it appends to the journal. "
+    "Advisory only -- fires once per session."
 )
 
 

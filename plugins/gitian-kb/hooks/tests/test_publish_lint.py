@@ -165,6 +165,9 @@ class EmptyTopicsRule(PublishLintTestCase):
         reason = self.assert_denied(proc)
         self.assertIn("gitian-kb://vocab", reason)
         self.assertIn("1-3 topics", reason)
+        # This lint fires in whoever is WRITING -- normally kb-scribe, a subagent with no
+        # resource-read tool at all, so the advice has to name the tool that works there.
+        self.assertIn("read_resource", reason)
 
     def test_populated_topics_does_not_fire(self):
         proc = self.run_lint(
@@ -258,6 +261,39 @@ class AppendEntryExemption(PublishLintTestCase):
         )
         reason = self.assert_denied(proc)
         self.assertIn('"gitian"', reason)
+
+
+class PatchToolCoverage(PublishLintTestCase):
+    """[[kb-scribe-delegation]]: hooks.json now routes patch_doc/patch_memory through this lint
+    too, since a patch REPLACES a manifest list wholesale and can therefore mistype a topic
+    exactly as a publish can. r1 must stay out of it: on a sparse patch an omitted `topics` means
+    "unchanged", not "no topics"."""
+
+    def test_patch_doc_with_no_topics_is_not_flagged_by_r1(self):
+        proc = self.run_lint(
+            envelope("mcp__plugin_gitian-kb_gitian__patch_doc", tool_input={"slug": "some-plan"})
+        )
+        self.assert_silent(proc)
+
+    def test_patch_memory_with_no_topics_is_not_flagged_by_r1(self):
+        proc = self.run_lint(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__patch_memory",
+                tool_input={"slug": "a-memory", "status": "active"},
+            )
+        )
+        self.assert_silent(proc)
+
+    def test_patch_doc_near_miss_topic_is_caught_by_r2(self):
+        self.seed_vocab([{"slug": "kb-discipline", "description": "KB discipline", "degree": 4}])
+        proc = self.run_lint(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__patch_doc",
+                tool_input={"slug": "some-plan", "topics": ["kb-disciplne"]},
+            )
+        )
+        reason = self.assert_denied(proc)
+        self.assertIn('did you mean "kb-discipline"?', reason)
 
 
 class NearMissRule(PublishLintTestCase):

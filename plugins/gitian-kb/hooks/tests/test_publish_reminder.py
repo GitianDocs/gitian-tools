@@ -91,6 +91,20 @@ class PublishReminderTestCase(unittest.TestCase):
             timeout=10,
         )
 
+    def merge(self, doc):
+        """Seed state through state.py's own `merge` subcommand (same shape test_orientation.py
+        uses), so the fixture goes through the real shape-normalizing write path."""
+        proc = subprocess.run(
+            [sys.executable, str(STATE_PY), "merge"],
+            input=json.dumps(doc),
+            capture_output=True,
+            text=True,
+            env=self.env,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 0, msg="stderr=%r" % proc.stderr)
+        return proc
+
     def bump_epoch(self, sid):
         proc = subprocess.run(
             [sys.executable, str(STATE_PY), "bump-epoch", sid],
@@ -205,6 +219,39 @@ class PublishSuppression(PublishReminderTestCase):
         )
         proc = self.run_hook(self.envelope(transcript_path=transcript))
         self.assert_silent(proc)
+
+    def test_patch_doc_also_suppresses(self):
+        # A revision IS recording the work ([[kb-scribe-delegation]] made patch_doc/body_edits
+        # the scribe's normal path), so a session that patched has published something.
+        transcript = self.write_transcript(
+            [edit_line()] * 3 + [publish_line("mcp__plugin_gitian-kb_gitian__patch_doc")]
+        )
+        proc = self.run_hook(self.envelope(transcript_path=transcript))
+        self.assert_silent(proc)
+        self.assertIsNone(self.flag(SID))
+
+    def test_a_subagent_publish_recorded_in_state_suppresses(self):
+        # THE delegation case: a background kb-scribe publishes from its own sidechain
+        # transcript, which is a SEPARATE file -- so scanning the parent transcript finds
+        # nothing. harvest.py counted it under the parent's session id (subagent MCP traffic
+        # fires these hooks with the parent's sid), and that counter is what has to be
+        # believed, or the reminder nags about work published minutes ago.
+        self.merge({"sessions": {SID: {"publishes": 1}}})
+        transcript = self.write_transcript([edit_line()] * 3)
+        proc = self.run_hook(self.envelope(transcript_path=transcript))
+        self.assert_silent(proc)
+        self.assertIsNone(self.flag(SID))
+
+    def test_zero_publishes_in_state_still_fires(self):
+        self.merge({"sessions": {SID: {"publishes": 0}}})
+        transcript = self.write_transcript([edit_line()] * 3)
+        self.assert_block(self.run_hook(self.envelope(transcript_path=transcript)))
+
+    def test_the_reason_briefs_the_scribe_rather_than_naming_a_write_tool(self):
+        transcript = self.write_transcript([edit_line()] * 3)
+        payload = self.assert_block(self.run_hook(self.envelope(transcript_path=transcript)))
+        self.assertIn("kb-scribe", payload["reason"])
+        self.assertIn("once per session", payload["reason"])
 
 
 class LoopGuard(PublishReminderTestCase):
