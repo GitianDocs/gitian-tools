@@ -95,6 +95,9 @@ class SessionContextTestCase(unittest.TestCase):
         self.env["GITIAN_KB_STATE_FILE"] = self.state_file
         self.env["CLAUDE_PROJECT_DIR"] = self.tmpdir  # not a git repo: no repo/branch lines
         self.env.pop("GITIAN_KB_URL", None)
+        # Hermetic against this machine's real ~/.claude/plugins/known_marketplaces.json: a dev box
+        # with auto-update off would otherwise grow every context here by one line.
+        self.env["GITIAN_KB_MARKETPLACES_FILE"] = os.path.join(self.tmpdir, "no-such-file.json")
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)

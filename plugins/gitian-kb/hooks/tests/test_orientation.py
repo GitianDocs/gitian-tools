@@ -157,6 +157,70 @@ class RepoClause(OrientationTestCase):
             shutil.rmtree(plain_dir, ignore_errors=True)
 
 
+class ClaudeEphemeralStateIsExempt(OrientationTestCase):
+    """A write into Claude Code's ephemeral state (<config>/projects -- agent memory, transcripts
+    -- and <config>/plans) is a path no in-flight plan can claim: silent, flag NOT spent, NOT
+    counted as an edit -- so the first real mutation afterwards still gets the nudge. AUTHORED
+    source under the same config dir (plugins, agents, skills, commands) is NOT exempt."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = os.path.join(self.tmpdir, "home")
+        self.config = os.path.join(self.home, ".claude")
+        self.env["HOME"] = self.home
+        self.env.pop("CLAUDE_CONFIG_DIR", None)
+
+    def test_memory_write_is_silent_and_the_next_real_edit_still_fires(self):
+        memory = os.path.join(self.config, "projects", "p", "memory", "fact.md")
+        proc = self.run_hook(envelope(tool_name="Write", tool_input={"file_path": memory}))
+        self.assert_silent(proc)
+        session = self.dump_state().get("sessions", {}).get("sess-1", {})
+        self.assertEqual(session.get("edits", 0), 0)
+        self.assertNotEqual(session.get("flags", {}).get("orientation"), True)
+
+        self.assert_deny(self.run_hook(envelope(tool_input={"file_path": "/repo/src/a.ts"})))
+
+    def test_plans_are_exempt_and_a_notebook_path_is_read_too(self):
+        plan = os.path.join(self.config, "plans", "x.md")
+        self.assert_silent(self.run_hook(envelope(tool_input={"file_path": plan})))
+        notebook = os.path.join(self.config, "projects", "p", "scratch.ipynb")
+        self.assert_silent(
+            self.run_hook(envelope(tool_name="NotebookEdit", tool_input={"notebook_path": notebook}))
+        )
+
+    def test_a_relative_target_is_resolved_against_the_payload_cwd(self):
+        proc = self.run_hook(
+            envelope(tool_input={"file_path": "projects/p/memory/fact.md"}, cwd=self.config)
+        )
+        self.assert_silent(proc)
+        # The same relative path from a repo cwd is an ordinary edit.
+        self.assert_deny(
+            self.run_hook(envelope(tool_input={"file_path": "projects/p/memory/fact.md"}, cwd="/repo"))
+        )
+
+    def test_authored_source_under_the_config_dir_is_not_exempt(self):
+        for sub in ("plugins/cache/m/p/1.0.0/hooks/a.sh", "agents/x.md", "skills/s/SKILL.md", "settings.json"):
+            with self.subTest(sub=sub):
+                # fresh session per case: the deny fires once per session
+                proc = self.run_hook(
+                    envelope(tool_input={"file_path": os.path.join(self.config, sub)}, session_id=sub)
+                )
+                self.assert_deny(proc)
+
+    def test_claude_config_dir_override_is_honored(self):
+        self.env["CLAUDE_CONFIG_DIR"] = os.path.join(self.tmpdir, "cfg")
+        inside = os.path.join(self.tmpdir, "cfg", "plans", "x.md")
+        self.assert_silent(self.run_hook(envelope(tool_input={"file_path": inside})))
+        # ...and the default location is then an ordinary path.
+        self.assert_deny(
+            self.run_hook(envelope(tool_input={"file_path": os.path.join(self.config, "plans", "a")}))
+        )
+
+    def test_a_sibling_directory_sharing_the_prefix_is_not_exempt(self):
+        lookalike = os.path.join(self.home, ".claude-backup", "projects", "a.md")
+        self.assert_deny(self.run_hook(envelope(tool_input={"file_path": lookalike})))
+
+
 class NonZeroReadsAlwaysSilent(OrientationTestCase):
     def test_never_denies_from_the_start_and_still_counts_edits(self):
         self.merge({"sessions": {"sess-1": {"gitianReads": 3}}})

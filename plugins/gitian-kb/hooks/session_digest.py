@@ -54,6 +54,7 @@ from datetime import datetime, timezone
 # session_digest.py always runs as a script file (never `python3 -c ...`), so Python has already
 # put its own directory at sys.path[0] -- `import state` resolves state.py as a sibling module,
 # same as harvest.py does (see its own docstring for the same note).
+import plugin_update
 import state as state_mod
 
 STALE_SESSION_HOURS = 12
@@ -209,7 +210,23 @@ def build(source, sid):
 
     _record_seen_vocab_rev(sid, server_key, _as_number(server.get("vocabRev")))
 
-    return text
+    # Plugin-update tail, on EVERY source: the update nudge from the version the server last
+    # advertised (cached by harvest.py -- no network here), then the auto-update hint. Each is
+    # independently best-effort and independently bounded (once a day / once a week, per machine); see
+    # plugin_update.py.
+    lines = [text] if text else []
+    for build_line in (
+        lambda: plugin_update.nudge_for(server.get("pluginLatest")),
+        plugin_update.autoupdate_hint,
+    ):
+        try:
+            line = build_line()
+        except Exception:
+            line = None
+        if line:
+            lines.append(line)
+
+    return "\n".join(lines) if lines else None
 
 
 def main(argv):

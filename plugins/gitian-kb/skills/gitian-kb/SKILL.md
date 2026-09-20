@@ -39,14 +39,13 @@ or on a timer. A pivot or a wrapped session clears the bar; a rename or a re-run
   (`include_landed: true` widens it to who reworked those paths) — on overlap with paths you are
   about to touch, read the contending doc first.
 - **Background, one at a time.** Types are `gitian-kb:kb-librarian` and `gitian-kb:kb-scribe`. At
-  most one scribe and one librarian in flight; a follow-up on the same item — a correction, a
-  sign-off answer, a later status flip — goes to the **live scribe via `SendMessage`**, unrelated
-  work waits for the report.
+  most one scribe and one librarian in flight; a follow-up on the same item goes to the **live
+  scribe via `SendMessage`**, unrelated work waits for the report.
 - **Reads you will act on, you make yourself.** `get` the doc you are about to follow; a one-off
   `search`/`get` stays inline — spawning an agent costs more. On `ambiguous_slug`, retry with a
   `kb` from its `candidates`, never a guess. Dispatch the librarian for a multi-call sweep, a
   digest, or a vocab-delta refresh when `vocab_rev` moves.
-- **Writes are never inline.** Brief the scribe — it carries the authoring discipline.
+- **Writes are never inline.** Brief the scribe.
 
 ## The brief (10-20 lines)
 
@@ -63,7 +62,8 @@ Required every time — the scribe has no cwd and no conversation:
   and hands back `NEEDS SIGN-OFF` on a landing that isn't the brief's `kb`.
 - **project / files** — the `project`, and the paths a plan or code-shaped doc will touch
   (`files`), else no file intents at all
-- **what happened, and the decisions *with the why*** — the substance; only you have it
+- **what happened, and the decisions *with the why*** — only you have it. Tool results never
+  reach the scribe: a finding from a log or query output goes in the brief
 
 Whatever else applies: **target slug** (revising, retracting, merging — survivor **and** duplicate
 for a dedupe); **rejected alternatives**; **status / impl_status** — state a terminal flip or
@@ -74,8 +74,8 @@ conversation holds the substance.
 ## Reports and sign-off
 
 A success report is one line — `slug rev N → url` — plus the `landed_in` KB, `warnings` verbatim,
-the judgment calls, and for a spec-class doc its `summary` and heading outline. Warnings are
-advice, not blockers — relay them, fix them later.
+the judgment calls, and for a spec-class doc its `summary` and heading outline — the body is
+unread, so `get` a high-stakes one once. Warnings are advice: relay them, fix later.
 
 **`NEEDS SIGN-OFF`** means nothing was published: create-vs-revise unclear, the brief contradicting
 the transcript or the doc, an unstated terminal flip or retraction, an edit that would drop

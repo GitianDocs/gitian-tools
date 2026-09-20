@@ -9,6 +9,16 @@
 # gitian read never sees this, from the very first mutation onward -- and a BACKGROUND librarian's
 # reads count, since harvest.py records a subagent's MCP traffic under the parent's session id.
 #
+# A write into Claude Code's EPHEMERAL state -- <config>/projects/ (agent memory, transcripts) and
+# <config>/plans/, where <config> is $CLAUDE_CONFIG_DIR or ~/.claude -- is exempt entirely: no
+# in-flight plan can claim such a path, so denying it taught agents that the nudge is noise. It
+# neither fires the flag nor counts as an edit (the Stop publish-reminder counts edits, and a
+# memory write is not repo work either), so the first REAL mutation still gets the nudge. The list
+# is an allowlist on purpose: <config>/plugins, agents, skills and commands are AUTHORED source,
+# and a session whose whole task is editing a plugin there must still be nudged. A relative target
+# is resolved against the payload's cwd first; the match is lexical (no `..` resolution), which is
+# fine for an advisory nudge.
+#
 # Fail-open on every path: bad/garbage/empty stdin, a missing session_id, a missing lib-state.sh,
 # or any state-substrate failure (corrupt/unwritable state file, missing python3) all fall through
 # to silence -- a denial is only ever emitted when gks_flag_once itself printed "fire".
@@ -47,6 +57,36 @@ except Exception:
     pass
 ' 2>/dev/null)"
 [ -n "$cwd" ] || cwd="."
+
+# --- exempt: the target is Claude Code's own ephemeral state (memory, transcripts, plans) ------
+target="$(printf '%s' "$hook_input" | python3 -c '
+import json, sys
+try:
+    obj = json.load(sys.stdin)
+    ti = obj.get("tool_input") if isinstance(obj, dict) else None
+    ti = ti if isinstance(ti, dict) else {}
+    for key in ("file_path", "notebook_path"):
+        v = ti.get(key)
+        if isinstance(v, str) and v:
+            sys.stdout.write(v)
+            break
+except Exception:
+    pass
+' 2>/dev/null)"
+if [ -n "$target" ]; then
+  case "$target" in
+    /*) ;;
+    *) target="${cwd%/}/${target}" ;;
+  esac
+  config_dir="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
+  case "$config_dir" in
+    /*)
+      case "$target" in
+        "${config_dir%/}"/projects/* | "${config_dir%/}"/plans/*) exit 0 ;;
+      esac
+      ;;
+  esac
+fi
 
 reads="$(gks_get "sessions.$sid.gitianReads")"
 case "$reads" in

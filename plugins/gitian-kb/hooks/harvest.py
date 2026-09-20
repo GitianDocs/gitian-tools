@@ -29,6 +29,7 @@ import sys
 # its own directory at sys.path[0] -- `import state` below resolves state.py as a sibling module
 # without any path manipulation (see state.py's own docstring: "sibling hook glue can `import
 # state` directly rather than shelling out").
+import plugin_update
 import state as state_mod
 
 # Multi-KB phase 1 (see [[multi-kb-core-plan]]): sessions.<sid>.lastSeenVocabRev is keyed per
@@ -167,15 +168,29 @@ def _is_retract_call(tool_name):
 
 
 def _text_blocks(tool_response):
-    """MCP tool responses are typically {"content"|"contents": [{"text": "<json>"}, ...]}."""
+    """Every text block in a tool response, across the three shapes it arrives in.
+
+    The one Claude Code ACTUALLY hands a PostToolUse hook for an MCP tool call is a BARE LIST of
+    content blocks -- [{"type": "text", "text": "<json>"}] -- captured from a live hook payload
+    (Claude Code 2.1.272). Until 0.22.0 only the dict shapes below were read, so on real tool
+    traffic this returned nothing: `vocab_rev` was never harvested, no write was ever counted (the
+    Stop reminder then claimed "nothing published" in sessions that had published), and no mint
+    follow-up ever fired -- while every test passed, because every fixture used the dict shape.
+    The dict shapes stay: {"content": [...]} is the MCP wire envelope, and {"contents": [...]} is
+    what a resource read (ReadMcpResourceTool) answers with."""
     blocks = []
-    if isinstance(tool_response, dict):
+
+    def collect(items):
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    blocks.append(item["text"])
+
+    if isinstance(tool_response, list):
+        collect(tool_response)
+    elif isinstance(tool_response, dict):
         for key in ("content", "contents"):
-            items = tool_response.get(key)
-            if isinstance(items, list):
-                for item in items:
-                    if isinstance(item, dict) and isinstance(item.get("text"), str):
-                        blocks.append(item["text"])
+            collect(tool_response.get(key))
     return blocks
 
 
@@ -373,6 +388,12 @@ def harvest(raw_text, payload):
         server_updates["vocabRev"] = vocab_rev
         session_vocab_rev = vocab_rev
 
+    # The server advertises the current plugin version on every success envelope; cache it so the
+    # NEXT session's SessionStart can compare without a network call (see plugin_update.py).
+    plugin_latest = plugin_update.latest_from_blocks(_decoded_blocks(tool_response))
+    if plugin_latest is not None:
+        server_updates["pluginLatest"] = plugin_latest
+
     if is_vocab_read:
         topics = _extract_topics(tool_response)
         if topics is not None:
@@ -451,8 +472,10 @@ def apply_effect(effect):
             server = _touch_server(state, effect["server_key"])
             if "vocabRev" in server_updates:
                 server["vocabRev"] = max(server_updates["vocabRev"], _as_counter(server.get("vocabRev")))
+            # pluginLatest is overwritten, never max()ed: the most recent observation is the
+            # truth (a rolled-back server advertising an older version must stop the nudge).
             for field in ("topics", "vocabFetchedAt", "undescribedTopics", "lastPublishAt",
-                          "lastPublishSlug", "lastAppendAt"):
+                          "lastPublishSlug", "lastAppendAt", "pluginLatest"):
                 if field in server_updates:
                     server[field] = server_updates[field]
 
@@ -651,6 +674,11 @@ def mint_followup(raw_text, payload):
         return None
     if not isinstance(sid, str) or not sid:
         return None
+    # `organic_topics_minted` is a WRITE warning. _find_mint_warning recurses into JSON-parsable
+    # strings, so without this gate a `get` whose body QUOTES such a warning would emit the
+    # follow-up and write the quoted slug into undescribedTopics.
+    if not _is_publish_call(tool_name):
+        return None
 
     slugs = _extract_minted_slugs(raw_text, payload.get("tool_response"))
     if not slugs:
@@ -662,12 +690,41 @@ def mint_followup(raw_text, payload):
     return _mint_message(fresh)
 
 
+def plugin_update_nudge(payload):
+    """Second extension to the harvest pass: when this gitian response advertises a
+    `plugin_latest` newer than the installed manifest, return the update nudge
+    (plugin_update.nudge_for owns the comparison and the once-a-day bound). None otherwise --
+    including a non-gitian call, a call made inside a subagent, an error envelope (never stamped)
+    or a current install."""
+    tool_input = payload.get("tool_input")
+    tool_input = tool_input if isinstance(tool_input, dict) else {}
+    if not _is_gitian_call(payload.get("tool_name"), tool_input):
+        return None
+    # Inside a subagent the payload carries `agent_id`. Its context reaches nobody who can act on
+    # "tell the user", so stay silent there -- harvest() has already cached the version, and the
+    # next SessionStart delivers it to the primary.
+    if payload.get("agent_id"):
+        return None
+    latest = plugin_update.latest_from_blocks(_decoded_blocks(payload.get("tool_response")))
+    if latest is None:
+        return None
+    return plugin_update.nudge_for(latest)
+
+
 def main():
     raw_text, payload = _parse_stdin()
     effect = harvest(raw_text, payload)
     apply_effect(effect)
 
-    context = mint_followup(raw_text, payload)
+    parts = []
+    for build_context in (lambda: mint_followup(raw_text, payload), lambda: plugin_update_nudge(payload)):
+        try:
+            text = build_context()
+        except Exception:
+            text = None  # one nudge failing must not swallow the other
+        if text:
+            parts.append(text)
+    context = "\n\n".join(parts)
     if context:
         sys.stdout.write(
             json.dumps(
