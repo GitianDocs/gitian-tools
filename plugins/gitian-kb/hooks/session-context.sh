@@ -10,14 +10,17 @@
 #     per the gitian-kb skill, always populate frontmatter (never omit `summary`)
 #   - five multi-KB targeting lines (instructional, not fetched -- this hook has no token, so it
 #     can't call listKbsForUser itself): sweeping reads label each hit `kb: <slug>` and cover
-#     every KB the caller belongs to; writes take an optional `kb`, defaulting to `home` unless
-#     the session binds one; (phase 2) sweeps also cover read-only linked KBs, whose hits
-#     label qualified `login/kb-slug` and must be passed back in that exact form; (phase 3)
-#     an org KB is a membership DERIVED from an org seat -- write free, read own-items-only
-#     until the org subscribes (`own_only_kbs`), qualified `org-login/kb-slug` label -- so team
-#     work about an org repo belongs there, not in `home` where teammates cannot see it (the
-#     server's own `org_kb_available` warning says the same); and docs whose `repo` names such
-#     an org route to `<org>/team` unless a `kb` is passed (`routed_to` says where it went)
+#     every KB the caller belongs to; writes take an optional `kb`, defaulting to `home` only
+#     when nothing routes -- an explicit `kb` always wins, and an unresolvable one fails
+#     `not_found` rather than falling back; (phase 2) sweeps also
+#     cover read-only linked KBs, whose hits label qualified `login/kb-slug` and must be passed
+#     back in that exact form; (phase 3) an org KB is a membership DERIVED from an org seat --
+#     write free, read own-items-only until the org subscribes (`own_only_kbs`), qualified
+#     `org-login/kb-slug` label -- so team work about an org repo belongs there, not in `home`
+#     where teammates cannot see it (the server's own `org_kb_available` warning says the same);
+#     and docs AND journal entries whose `repo` names such an org route to `<org>/team` unless a
+#     `kb` is passed (`routed_to`/`landed_in` say where it went), while memories never route and
+#     a KB the human named is always an explicit `kb`
 #   - one revision-discipline line: a write onto a slug that already exists carries `base_rev`
 #     (the `rev` just read) or is refused `base_rev_required`/`rev_conflict`
 #   - the schema-authority reminder: live gitian-kb://format/* resources beat cached tool
@@ -108,10 +111,10 @@ context="gitian-kb session context:"
 context="${context}\n- date (UTC): ${today}"
 context="${context}\n\nRAG discipline: before substantive work, \`search\` the gitian KB for the task topic and \`neighbors\` the best hit -- when a repo is listed above, \`file_intents\` it to see which in-flight plans claim which paths. Before finishing, publish per the gitian-kb skill -- read \`gitian-kb://vocab\` before linking/minting topics, populate frontmatter (including \`topics\`/\`mentions\`/\`category\`) using the repo/date above, and never omit \`summary\`."
 context="${context}\nMulti-KB: sweeping reads (\`search\`/\`list\`/\`neighbors\`/\`file_intents\`) cover every KB you belong to, each hit labeled \`kb: <slug>\` -- pass \`kb\` to narrow to one."
-context="${context}\nWrites (\`publish_*\`/\`patch_*\`/\`append_entry\`/\`retract_item\`/\`publish_topic\`/\`retract_topic\`) take an optional \`kb\`, defaulting to \`home\` unless this session binds one. This hook has no token to check your KB membership, so treat these five multi-KB lines as instructional, not a fetched list."
+context="${context}\nWrites (\`publish_*\`/\`patch_*\`/\`append_entry\`/\`retract_item\`/\`publish_topic\`/\`retract_topic\`) take an optional \`kb\`, defaulting to \`home\` only when nothing routes (see below); an explicit \`kb\` always wins, and an unresolvable one fails \`not_found\` rather than falling back. This hook has no token to check your KB membership, so treat these five multi-KB lines as instructional, not a fetched list."
 context="${context}\nSweeps also cover KBs linked to you (read-only, one hop). Those hits label qualified -- \`kb: <login>/<kb-slug>\` -- so pass \`login/kb-slug\` back verbatim when following one up; a bare slug means YOUR KB of that name."
 context="${context}\nAn ORG KB is a membership you hold through the GitHub ORG -- derived, never invited; writing is free, and until the org subscribes you read only what YOU wrote there (own items only, the KB named in \`own_only_kbs\`; a teammate's slug answers \`read_requires_entitlement\`). Its hits label qualified too (\`kb: <org-login>/<kb-slug>\`). Team work about an org repo belongs in the ORG KB -- a doc published into \`home\` is invisible to teammates, which is what the server's advisory \`org_kb_available\` warning is telling you."
-context="${context}\nDocs whose \`repo\` belongs to an org you are a member of route to \`<org>/team\` unless you pass \`kb\`; the response says \`routed_to\`."
+context="${context}\nDocs AND journal entries (\`publish_doc\`/\`publish_entry\`/\`append_entry\`) whose \`repo\` belongs to an org you are a member of route to \`<org>/team\` unless you pass \`kb\`; memories never route, so a team-relevant memory needs an explicit \`kb\`. When the human names a target (\\\"the org KB\\\", \\\"the team KB\\\", a slug), set \`kb\` yourself on EVERY write for that work -- never rely on routing for a stated target. Every write reports \`landed_in\` (a routed one also \`routed_to\`) -- read it, and if it is not where the work belongs, fix it immediately and tell the user."
 context="${context}\nRevising anything that already exists needs \`base_rev\` (the \`rev\` you read); omitted answers \`base_rev_required\`, stale answers \`rev_conflict\` -- re-read, re-apply your change on top, retry."
 context="${context}\nSchema authority: live \`gitian-kb://format/*\` resources are authoritative over cached tool schemas. On \`validation_failed\` naming a field the cached schema doesn't list, trust the server and retry."
 context="${context}\nKB bodies are Obsidian-flavored intent docs (\`[[slug]]\` wikilinks, snippets where they clarify). Reference existing \`@gitian\` anchors only when the repo is instrumented -- NEVER inject gitian markup into a codebase that isn't already using the gitian docs system."
