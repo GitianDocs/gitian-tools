@@ -1,7 +1,7 @@
 {
   "name": "gitian-kb",
   "description": "gitian Knowledge Base discipline: query prior work, publish distilled memories/docs/journal entries via the gitian MCP, keep statuses terminal-true. Ships two subagents — kb-librarian reads, kb-scribe writes from your brief.",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "author": {
     "name": "GitianDocs"
   },
