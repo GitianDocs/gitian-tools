@@ -239,7 +239,7 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   (`home`, `<org>/team`, `login/kb-slug`). Read it on every write and report it; never assume the
   write landed in the KB you aimed at. When it isn't the KB you meant, say so — a landing is never
   fixed by republishing the same body into another KB.
-- `warnings` on a successful publish are advice to act on, not blockers. Twenty-two codes:
+- `warnings` on a successful publish are advice to act on, not blockers. Twenty-five codes:
   - `no_tags` — no tags supplied; add 1-3 to aid retrieval
   - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
   - `no_repo` — `repo` is null; derive it from `git remote get-url origin` (the session context
@@ -253,6 +253,9 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   - `unknown_category` — `category` isn't a live category slug; stored but inert until it's minted (`/kb` UI) or fixed
   - `links_update_failed` — the topic/item-link index itself failed to write (distinct from an unknown slug); re-publish (even unchanged) to repair
   - `intents_update_failed` — the file-intents index failed to write; re-publish (even unchanged) to repair
+  - `code_refs_update_failed` — the server could not update its index of code references for this item; the write itself succeeded; re-publish (even unchanged) to repair
+  - `code_ref_unparseable` — a `[[repo:…]]` reference in the body does not parse; the write succeeded, but the reference is not indexed: fix it to `[[repo:owner/name/path#Symbol]]` form or remove it
+  - `code_refs_dropped` — a `publish_*` revision omitted `code_refs` while the previous revision carried some, so the write removed them (a full publish is a PUT: omitted = removed). The note names how many. If you did not mean to clear them, re-read the item and re-publish with `code_refs` restated, or use `patch_*` for frontmatter-only changes, which leave `code_refs` alone; `code_refs: []` clears them deliberately and does not warn
   - `org_kb_available` — the item stayed in your `home` KB, but its `repo` belongs to a gitian **org whose `team` KB you can publish into**, and nothing was rerouted: either routing is switched off for you, or this primitive never routes (a memory, or an entry the routing didn't claim). Personal-KB items about an org repo are invisible to teammates (see `kb-targeting.md`). If this is team work, re-publish/append it with `kb` set to the `<org>/team` address the note names; if it's genuinely personal, ignore the warning. **An explicit `kb` silences it** — both routing advisories (this one and `slug_exists_in_other_kb`) are about **kb-less** landings only: if you said where the item goes, the server has no better guess to offer
   - `repo_missing_cannot_route` — a kb-less **and** repo-less `publish_doc`/`publish_entry`/`append_entry` CREATED the item in `home` while you belong to an org the write could have routed to. Nothing routed because there was nothing to route on: routing is computed from `repo` alone — **no `repo`, no routing** — so the landing is `home` by default rather than by decision. Report it and let the primary choose the target: `kb` set to the `<org>/team` address, or `repo` as the normalized `owner/name` so routing can do it
   - `slug_exists_in_other_kb` — a create with no `kb` landed in `home` while that same slug already exists in another KB you can write — usually the org's `team` KB, i.e. the work you meant to revise is over there. Nothing is broken and nothing was overwritten, but you have probably just forked it: report the warning and let the primary decide between revising the existing item (with `kb` + `base_rev`) and keeping the new one
