@@ -46,7 +46,8 @@ id).
 **Metadata** (`--key=value`, one per line, right after the annotation line): `--id=`, `--title="..."`
 (display heading override), `--group=`, `--urgency=subtle|normal|loud|critical`, `--module=`,
 `--request=<id>` / `--response=<id>` (api kind only — pull another annotation's captured code into
-the Request/Response panel).
+the Request/Response panel). An `--id=` is also a link target — Knowledge Base items point at it with
+`[[repo:owner/name/path#@<id>]]` — so keep ids stable, unique within the repo, and lowercase-kebab.
 
 **Docs discovery:** markdown lives in a `docs/` or `.docs/` directory at any level; `docs/foo.ts.md`
 documents the sibling `foo.ts` (the docs dir's parent); `docs/payments.md` documents a sibling

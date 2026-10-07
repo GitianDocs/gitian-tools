@@ -1,7 +1,7 @@
 {
   "name": "gitian-docs",
   "description": "gitian documentation discipline: keep @gitian annotations and paired docs/ files in sync as code changes, with a SessionStart cue and a PostToolUse nudge that fire only in repos already instrumented with gitian.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "author": {
     "name": "GitianDocs"
   },
