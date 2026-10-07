@@ -1,0 +1,6 @@
+{
+  "gitian-code": {
+    "type": "http",
+    "url": "${GITIAN_CODE_URL:-https://gitian.dev}/api/mcp/code"
+  }
+}

@@ -21,7 +21,15 @@ HOOKS_DIR = Path(__file__).resolve().parent.parent
 HARVEST_SH = HOOKS_DIR / "harvest.sh"
 STATE_PY = HOOKS_DIR / "state.py"
 
-SERVER_KEY = "https://gitian.dev/api/mcp"  # default GITIAN_KB_URL, per the state contract
+SERVER_KEY = "https://gitian.dev/api/mcp/kb"  # default GITIAN_KB_URL, per the state contract
+
+# The code server's five tools under both spellings (the gitian-docs plugin's `gitian-code` key, and a
+# hand-wired `gitian-code`). Every hook in this plugin is about the KB server, so none of these may
+# ever be seen as one of its calls -- even though the names contain "gitian" and `code_search` ends
+# in a read suffix.
+CODE_TOOLS = ("code_repos", "code_overview", "code_search", "code_annotation", "code_page")
+CODE_PREFIXES = ("mcp__plugin_gitian-docs_gitian-code__", "mcp__gitian-code__")
+CODE_TOOL_NAMES = tuple(prefix + tool for prefix in CODE_PREFIXES for tool in CODE_TOOLS)
 
 
 def envelope(tool_name, tool_input=None, tool_response=None, session_id="sess-1"):
@@ -1198,6 +1206,86 @@ class BatchWrite(HarvestTestCase):
         self.assertIn("clever", context)
         undescribed = self.dump_state()["servers"][SERVER_KEY]["undescribedTopics"]
         self.assertEqual(sorted(undescribed), ["clever", "rostering"])
+
+
+class CodeServerIgnored(HarvestTestCase):
+    """The code server (`code_repos` ... `code_page`) is not the KB: harvest must neither count its
+    calls as orientation reads nor cache anything from its responses, whatever those responses say.
+    Every response here is the BARE-LIST shape a real PostToolUse payload carries, and carries the
+    very fields harvest looks for (`vocab_rev`, `plugin_latest`, a mint warning, a slug)."""
+
+    def lookalike_response(self):
+        return bare_list(
+            {
+                "vocab_rev": 99,
+                "plugin_latest": "9.9.9",
+                "slug": "src/auth/session.ts",
+                "warnings": [
+                    {
+                        "code": "organic_topics_minted",
+                        "path": "topics",
+                        "note": "auto-minted as organic, live immediately: forged-slug",
+                    }
+                ],
+            }
+        )
+
+    def test_a_code_tool_call_is_silent_and_writes_no_state(self):
+        for tool_name in CODE_TOOL_NAMES:
+            with self.subTest(tool_name=tool_name):
+                proc = self.run_harvest(
+                    envelope(
+                        tool_name,
+                        tool_input={"repo": "acme/api", "query": "session"},
+                        tool_response=self.lookalike_response(),
+                    )
+                )
+                self.assert_silent(proc)
+                self.assertFalse(os.path.exists(self.state_file))
+
+    def test_a_code_search_is_not_an_orientation_read(self):
+        # `code_search` ends in the "search" read suffix; the KB's own `search` is credited.
+        self.run_harvest(
+            envelope("mcp__gitian-code__code_search", tool_input={"query": "x"}, tool_response=bare_list({}))
+        )
+        self.assertFalse(os.path.exists(self.state_file))
+        self.run_harvest(
+            envelope("mcp__gitian__search", tool_input={"query": "x"}, tool_response=bare_list({}))
+        )
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"]["gitianReads"], 1)
+
+    def test_a_code_call_leaves_the_kbs_cached_state_untouched(self):
+        self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__get",
+                tool_input={"slug": "x"},
+                tool_response=bare_list({"slug": "x", "vocab_rev": 5}),
+            )
+        )
+        before = self.dump_state()
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-docs_gitian-code__code_page",
+                tool_input={"repo": "acme/api", "path": "src/a.ts"},
+                tool_response=self.lookalike_response(),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertEqual(self.dump_state(), before)
+
+    def test_the_kb_server_segment_is_case_insensitive_and_exact(self):
+        for tool_name in ("mcp__Gitian__get", "mcp__GITIAN__get"):
+            with self.subTest(tool_name=tool_name):
+                if os.path.exists(self.state_file):
+                    os.remove(self.state_file)
+                self.run_harvest(envelope(tool_name, tool_input={"slug": "x"}, tool_response=bare_list({})))
+                self.assertEqual(self.dump_state()["sessions"]["sess-1"]["gitianReads"], 1)
+        # `gitian-kb` is not the server's segment: the plugin's key is `gitian`, not `gitian-kb`.
+        os.remove(self.state_file)
+        self.run_harvest(
+            envelope("mcp__gitian-kb__get", tool_input={"slug": "x"}, tool_response=bare_list({}))
+        )
+        self.assertFalse(os.path.exists(self.state_file))
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ HOOKS_DIR = Path(__file__).resolve().parent.parent
 COMMIT_NUDGE_SH = HOOKS_DIR / "commit-nudge.sh"
 STATE_PY = HOOKS_DIR / "state.py"
 
-SERVER_KEY = "https://gitian.dev/api/mcp"  # default GITIAN_KB_URL, per the state contract
+SERVER_KEY = "https://gitian.dev/api/mcp/kb"  # default GITIAN_KB_URL, per the state contract
 
 
 def envelope(command, tool_response=None, session_id="sess-1"):

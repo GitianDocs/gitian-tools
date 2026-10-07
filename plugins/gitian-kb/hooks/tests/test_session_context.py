@@ -29,7 +29,7 @@ HOOKS_DIR = Path(__file__).resolve().parent.parent
 SESSION_CONTEXT_SH = HOOKS_DIR / "session-context.sh"
 STATE_PY = HOOKS_DIR / "state.py"
 
-SERVER_KEY = "https://gitian.dev/api/mcp"  # default GITIAN_KB_URL, per the state contract
+SERVER_KEY = "https://gitian.dev/api/mcp/kb"  # default GITIAN_KB_URL, per the state contract
 
 # [[kb-scribe-delegation]]: the static context's budget. The RAG/multi-KB/base_rev/schema-authority
 # paragraphs are gone -- the agents carry that discipline now -- and what is left is the delegation

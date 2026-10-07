@@ -1,6 +1,6 @@
 ---
 name: gitian-docs
-description: Use when changing code in a repo instrumented with gitian (a `.gitian/` directory or `@gitian` annotations present) — keep annotations and paired docs in sync as part of the change — and when adopting gitian documentation in a repo.
+description: Use when changing code in a repo instrumented with gitian (a `.gitian/` directory or `@gitian` annotations present) — keep annotations and paired docs in sync as part of the change — when adopting gitian documentation in a repo, and when you need to find or read code, a symbol or an `@gitian` annotation in a gitian-connected repository (the `code_*` tools).
 allowed-tools: Bash(test:*), Bash(git diff:*), Bash(head:*)
 ---
 
@@ -52,6 +52,34 @@ the Request/Response panel). An `--id=` is also a link target — Knowledge Base
 **Docs discovery:** markdown lives in a `docs/` or `.docs/` directory at any level; `docs/foo.ts.md`
 documents the sibling `foo.ts` (the docs dir's parent); `docs/payments.md` documents a sibling
 `payments/` directory if one exists; anything else in a docs dir is a standalone page.
+
+## Reading code through gitian: the `gitian-code` tools
+
+This plugin connects gitian's **read-only code server** (`gitian-code`; the first call opens a
+browser to approve "read your repositories", nothing to mint or configure). Its five tools find and
+read code in a GitHub repository connected to gitian — without cloning it and without reading whole
+files:
+
+| Tool | Use it to |
+|---|---|
+| `code_repos` | list the repositories you can open (`owner/name`, default branch, locked or not) |
+| `code_overview` | orient in one repo: modules, docs directories, whether it is instrumented, counts |
+| `code_search` | find a file, doc or `@gitian` annotation by name, path, title or annotation id — never returns content |
+| `code_annotation` | fetch one annotation by id: description, metadata and the code it captured |
+| `code_page` | one file's outline, annotations and paired doc; an excerpt only for a named symbol, line range or `offset`/`limit` (at most 200 lines) |
+
+The usual route is `code_repos` → `code_overview` → `code_search` → `code_page` or
+`code_annotation`. Reads pass the same private-repository gate as the web viewer, so a repo you
+cannot open in gitian answers `not_found`. Prefer them to guessing a path, and take only the slice
+you need; never paste what they return into a document.
+
+When a Knowledge Base item (the `gitian-kb` plugin) points at that code, it links it rather than
+copying it, as `[[repo:owner/name[@ref]/path#Symbol|#Lx-Ly|#@annotation-id|label]]` — one anchor
+after the path (a symbol, a line range such as `#L10-L20`, or an annotation id as `#@<id>`), then an
+optional `|label` — or in the item's `code_refs` frontmatter. Take the anchor from `code_page`'s
+outline or from a `code_search` hit; an annotation `--id=` is the anchor that survives edits best,
+which is one more reason to keep ids stable. The authoring detail (pinning a ref, the warnings) is in
+the `gitian-kb` plugin's authoring reference.
 
 ## Guardrails
 

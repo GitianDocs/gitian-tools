@@ -2,7 +2,9 @@
 """harvest.py -- PostToolUse harvester for the gitian-kb plugin's nudge layer.
 
 Invoked as a single python3 process (stdin passed straight through, unread by harvest.sh) by
-harvest.sh, itself registered as a PostToolUse hook matching "mcp__.*gitian.*|ReadMcpResourceTool".
+harvest.sh, itself registered as a PostToolUse hook matching the KB server's tool namespace
+(`mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__.*`, see kb_tool.py) or ReadMcpResourceTool --
+never the code server's tools, whose names a looser pattern would also catch.
 Passively mines every gitian MCP call for state worth remembering across turns/sessions: the
 server's vocab revision, a cached snapshot of its topic list, discipline counters (gitianReads,
 publishes), and publish/append timestamps -- all folded into the shared state file (see state.py)
@@ -29,6 +31,7 @@ import sys
 # its own directory at sys.path[0] -- `import state` below resolves state.py as a sibling module
 # without any path manipulation (see state.py's own docstring: "sibling hook glue can `import
 # state` directly rather than shelling out").
+import kb_tool
 import plugin_update
 import state as state_mod
 
@@ -100,12 +103,13 @@ MINT_SLUG_TOKEN_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")  # same kebab sha
 
 
 def _server_key():
-    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp" -- mirrors the shell default-expansion
-    every other hook uses to key servers, so all hooks land on the same state key."""
+    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp/kb" -- mirrors the shell default-expansion
+    every other hook uses to key servers, so all hooks land on the same state key. It is the
+    plugin's own `.mcp.json` url (the canonical KB endpoint; bare `/api/mcp` is a deprecated alias)."""
     base = os.environ.get("GITIAN_KB_URL")
     if not base:
         base = "https://gitian.dev"
-    return base + "/api/mcp"
+    return base + "/api/mcp/kb"
 
 
 def _parse_stdin():
@@ -121,9 +125,10 @@ def _parse_stdin():
 
 
 def _is_gitian_call(tool_name, tool_input):
-    """Guard: a gitian MCP tool call (`read_resource` included -- its name carries "gitian" like
-    every other tool on that server), or a ReadMcpResourceTool read of a gitian-kb:// resource."""
-    if isinstance(tool_name, str) and "gitian" in tool_name:
+    """Guard: a call to a tool of the gitian KB server under either spelling (`read_resource`
+    included) -- never the code server's tools, which also carry "gitian" in their names -- or a
+    ReadMcpResourceTool read of a gitian-kb:// resource."""
+    if kb_tool.is_kb_tool(tool_name):
         return True
     if tool_name == "ReadMcpResourceTool":
         uri = tool_input.get("uri")

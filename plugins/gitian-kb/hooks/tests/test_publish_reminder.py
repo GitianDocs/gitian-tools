@@ -24,6 +24,14 @@ STATE_PY = HOOKS_DIR / "state.py"
 
 SID = "sess-1"
 
+# The code server's five tools under both spellings (the gitian-docs plugin's `gitian-code` key, and a
+# hand-wired `gitian-code`). Every hook in this plugin is about the KB server, so none of these may
+# ever be seen as one of its calls -- even though the names contain "gitian" and `code_search` ends
+# in a read suffix.
+CODE_TOOLS = ("code_repos", "code_overview", "code_search", "code_annotation", "code_page")
+CODE_PREFIXES = ("mcp__plugin_gitian-docs_gitian-code__", "mcp__gitian-code__")
+CODE_TOOL_NAMES = tuple(prefix + tool for prefix in CODE_PREFIXES for tool in CODE_TOOLS)
+
 
 def _tool_use(name, tool_input=None):
     return {"type": "tool_use", "name": name, "input": tool_input if tool_input is not None else {}}
@@ -359,6 +367,17 @@ class Robustness(PublishReminderTestCase):
 
         transcript = self.write_transcript([edit_line()] * 3)
         proc = self.run_hook(self.envelope(transcript_path=transcript))
+        self.assert_block(proc)
+
+
+class CodeServerIgnored(PublishReminderTestCase):
+    def test_a_code_tool_is_not_a_publish_so_the_reminder_still_fires(self):
+        # Three edits cross the threshold; a transcript full of code lookups must not read as "this
+        # session published to the KB" and silence the reminder.
+        lines = [edit_line()] * 3 + [
+            publish_line(tool_name) for tool_name in CODE_TOOL_NAMES
+        ] + [publish_line("mcp__gitian-code__publish_doc")]
+        proc = self.run_hook(self.envelope(transcript_path=self.write_transcript(lines)))
         self.assert_block(proc)
 
 

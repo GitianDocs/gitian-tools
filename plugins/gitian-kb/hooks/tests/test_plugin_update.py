@@ -21,7 +21,7 @@ HOOKS_DIR = Path(__file__).resolve().parent.parent
 HARVEST_SH = HOOKS_DIR / "harvest.sh"
 SESSION_CONTEXT_SH = HOOKS_DIR / "session-context.sh"
 STATE_PY = HOOKS_DIR / "state.py"
-SERVER_KEY = "https://gitian.dev/api/mcp"
+SERVER_KEY = "https://gitian.dev/api/mcp/kb"
 
 sys.path.insert(0, str(HOOKS_DIR))
 import plugin_update  # noqa: E402

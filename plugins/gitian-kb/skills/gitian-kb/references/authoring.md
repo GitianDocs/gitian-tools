@@ -346,7 +346,8 @@ three-segment form when writing about a linked KB's item, for the same reason yo
 `kb` back verbatim. Reference code where the knowledge lives: in a repo already instrumented with
 gitian docs (a `.gitian/` config directory, `@gitian` annotations, paired `docs/` files), point at
 those anchors — an annotation id, a doc path — instead of duplicating their content; in any other
-repo, reference files and symbols plainly. **Never add `@gitian` annotations or any gitian markup
+repo, reference files and symbols plainly — as a code reference (see **Referencing code** below).
+**Never add `@gitian` annotations or any gitian markup
 to a codebase that isn't already using the gitian docs system** — publishing to the KB never
 licenses editing code comments; in-code instrumentation is opt-in via the gitian-docs plugin only.
 
@@ -354,6 +355,57 @@ Authoring from a transcript: distill, never transcribe. The body is the decision
 and the rejected alternatives — not the conversation that produced them. **Never quote a
 credential, token, key or secret seen in a transcript**, not even redacted-looking fragments; if a
 decision turns on one, name the variable, never the value.
+
+## Referencing code: `[[repo:…]]` and `code_refs`
+
+Point an item at code with a **code reference**, never a pasted copy. Inline, wherever a sentence
+names code:
+
+```
+[[repo:owner/name[@ref]/path#Symbol]]            a symbol: a function, class or type in the file
+[[repo:owner/name[@ref]/path#L10-L20]]           a line range (#L10 for one line)
+[[repo:owner/name[@ref]/path#@annotation-id]]    an @gitian annotation, by its --id=
+[[repo:owner/name[@ref]/path#Symbol|a label]]    |label sets the display text (after any anchor)
+```
+
+`repo:` is what makes it a code reference rather than a `[[slug]]` link to another KB item. `@ref`
+goes right after the repo name and is a branch, tag or commit sha; a `/` inside a ref is
+percent-encoded (`@feat%2Ffoo`). The path is repo-relative with no leading `/`. A reference inside a
+fenced block or an inline code span is an example of the syntax, not a reference.
+
+For code the item is *about* as a whole, also declare it in the optional `code_refs` frontmatter
+key: `{ repo, path, symbol? | lines? | annotation?, ref? }` entries (at most ONE anchor each, at most
+50 entries; `lines` is `[start, end]`; `ref` is written as-is there, not percent-encoded). `repo`
+may differ from the item's own `repo`. It is different from `files`, which declares the paths a PLAN
+will touch (contention); a plan usually wants both. The key is optional — omit it when the item
+points at no code; a `patch_*` supplying it **replaces** the stored array wholesale (`[]` clears it),
+`append_entry` unions, and a full `publish_*` that omits it removes what the last revision carried.
+
+How to write one well:
+
+- **Confirm before you write.** When the code tools are available (the gitian-docs plugin's
+  `gitian-code` server: `code_search` to find a file or annotation, `code_page` for a file's outline
+  and a bounded excerpt, `code_annotation` for one annotation by id), check that the path and symbol
+  exist and take the anchor from what they return — a symbol is an outline `name`, an annotation id
+  comes from the hit. Never paste what they return: reading it informs your sentence, the reference
+  says where it lives. If they are not available, write the reference unverified and say so in your
+  report.
+- **Symbol or annotation id over line numbers.** Lines rot the moment anything above them moves; use
+  `#L10-L20` only for code with no name.
+- **Pin for history, leave it off for living docs.** A claim about what the code did at a moment — a
+  landed recap, a decision record, a journal entry, a bug write-up — pins the commit
+  (`[[repo:acme/api@9f2c1e0/src/auth.ts#refreshToken]]`; `code_refs` takes `ref: 9f2c1e0`), so the
+  sentence stays true after the code moves. A doc meant to track the code — a spec in flight, a
+  plan, a memory about current behavior — leaves `@ref` off and follows the default branch.
+- **References are late-bound.** A write resolves nothing and needs no access to the repo; whether the
+  file, symbol or annotation still exists, and whether a reader may see the repo at all, is decided
+  when the item is READ. A reader without access sees the reference (repo, path, anchor) but not the
+  code behind it — write the sentence so it stands without the code in front of the reader.
+- **Three warnings are about this** (full text in the list under **Publishing rules**):
+  `code_ref_unparseable` — a `[[repo:…]]` in the body does not parse (it stays plain text and is not
+  indexed; fix or remove it); `code_refs_update_failed` — the write landed but its code-reference
+  index did not update (re-publish, even unchanged); `code_refs_dropped` — a full `publish_*`
+  omitted `code_refs` the previous revision carried (restate them, or revise with `patch_*`).
 
 ## Terminal-state discipline
 

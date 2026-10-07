@@ -1,7 +1,8 @@
 # gitian-docs
 
 Keeps `@gitian` annotations and paired `docs/` files in sync as code changes. Ships as a skill
-plus two lightweight hooks — no MCP server, nothing to authenticate.
+plus two lightweight hooks, and connects gitian's read-only code server (`gitian-code`) so an agent
+can find and read code in a gitian-connected repository.
 
 ## Install
 
@@ -53,6 +54,23 @@ instrumented. `node_modules/` is excluded too. The verdict is computed once per 
   the current changes on demand — preloads the changed-files diff and the project's
   `.gitian/config.yaml` (if any), then applies the skill's duty table to those files.
 
+## The code server
+
+`.mcp.json` connects the `gitian-code` MCP server at `https://gitian.dev/api/mcp/code` (set
+`GITIAN_CODE_URL=<your-gitian-host>` to point it at a self-hosted deployment). It is read-only and
+carries no static `Authorization` header on purpose: the first tool call gets a `401`, your client
+opens a browser to approve "read your repositories" (scope `repo:read`), and it stores the OAuth
+token itself — a configured header would suppress that flow. The grant is listed under Settings →
+Connected agents as **Repositories** and is revocable on its own; it is separate from the
+knowledge-base connection (`gitian-kb`), and a credential for one is refused by the other.
+
+Five tools, with the contract in `docs/code-mcp-transport.md`: `code_repos` (which repos you can
+open), `code_overview` (orient in one), `code_search` (find a file, doc or `@gitian` annotation —
+never returns content), `code_annotation` (one annotation by id) and `code_page` (a file's outline,
+and a bounded excerpt only for a symbol or line range you name). The tools appear as
+`mcp__plugin_gitian-docs_gitian-code__code_*`. A Knowledge Base item points at what they find with a
+`[[repo:owner/name[@ref]/path#Symbol]]` link or a `code_refs` entry (see the skill).
+
 ## State
 
 Per-session markers and the cached instrumentation verdict live in `~/.claude/gitian-docs/`
@@ -79,6 +97,8 @@ python3 plugins/gitian-docs/hooks/tests/test_docs_context.py
 ## Disable it
 
 - **Whole plugin:** `claude plugin uninstall gitian-docs` (or disable it from the plugin menu).
+- **Just the code server:** disconnect it from `/mcp`, or revoke the **Repositories** grant under
+  Settings → Connected agents.
 - **Just the hooks, keep the skill:** remove or empty `hooks/hooks.json` in a local checkout, or
   disable the plugin's hooks from Claude Code's `/hooks` view — the skill still triggers on its
   own description whenever you're editing an instrumented repo.

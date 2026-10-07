@@ -54,7 +54,7 @@ PUBLISH_REMINDER_SH = HOOKS_DIR / "publish-reminder.sh"
 # one) so a hook added by a later task is automatically covered by the fail-open gate.
 ALL_HOOK_SCRIPTS = sorted(HOOKS_DIR.glob("*.sh"))
 
-SERVER_KEY = "https://gitian.dev/api/mcp"  # default GITIAN_KB_URL, per the state contract
+SERVER_KEY = "https://gitian.dev/api/mcp/kb"  # default GITIAN_KB_URL, per the state contract
 
 
 # --- envelope builders -- one per hook's stdin contract, mirroring each hook's own test file -----

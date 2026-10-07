@@ -3,8 +3,9 @@
 
 Invoked as a single python3 process (stdin passed straight through, unread by publish-lint.sh) by
 publish-lint.sh, itself registered as a PreToolUse hook matching
-"mcp__.*(publish_doc|publish_memory|publish_entry|append_entry|patch_doc|patch_memory|batch_write)"
--- the patch tools included, since a patch revises an item's frontmatter and its topic/mention lists
+"mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__(publish_doc|publish_memory|publish_entry|append_entry|patch_doc|patch_memory|batch_write)"
+-- the KB server's namespace (kb_tool.py: both spellings, case-insensitive on the server segment),
+never the code server's -- the patch tools included, since a patch revises an item's frontmatter and its topic/mention lists
 are exactly what this lint is about, and batch_write, which carries up to 25 of those six writes
 in `operations[{tool, args}]` and so is where a bulk import's typos would otherwise go unseen.
 `publish_category` and `publish_topic` are not linted: they carry no topic/mention lists.
@@ -18,8 +19,9 @@ approve it" -- omitting the decision is not an `allow`, which this hook must nev
 session and rely on the model re-sending the identical call; delegated writers read that as a
 refusal and stopped, so an "advisory" lint blocked real publishes.
 
-Guard: tool_name must contain "gitian" (matches the harvest.py convention); anything else is
-silent. The matcher above is only a coarse pre-filter -- this guard is the real gate.
+Guard: tool_name must be a tool of the gitian KB server (kb_tool.is_kb_tool, the harvest.py
+convention); anything else -- another server's, the code server's -- is silent. The matcher above
+is only a coarse pre-filter -- this guard is the real gate.
 
 One rule, the one the server cannot see. Two earlier rules are gone because the server already
 returns them as warnings in the very tool response this advice now sits beside: empty topics
@@ -51,6 +53,7 @@ import sys
 # publish_lint.py always runs as a script file (never `python3 -c ...`), so Python has already put
 # its own directory at sys.path[0] -- `import state` below resolves state.py as a sibling module
 # without any path manipulation (see state.py's own docstring).
+import kb_tool
 import state as state_mod
 
 CONTEXT_PREFIX = "gitian-kb publish lint (advisory -- the call was not blocked):"
@@ -73,12 +76,12 @@ BATCH_WRITE_MARKER = "batch_write"
 
 
 def _server_key():
-    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp" -- mirrors the shell default-expansion every
+    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp/kb" -- mirrors the shell default-expansion every
     other hook uses to key servers, so the vocab cache this reads matches what harvest.py wrote."""
     base = os.environ.get("GITIAN_KB_URL")
     if not base:
         base = "https://gitian.dev"
-    return base + "/api/mcp"
+    return base + "/api/mcp/kb"
 
 
 def _parse_stdin():
@@ -208,7 +211,7 @@ def lint(payload):
     (`_apply`) must not touch state at all. Returns None when the top-level guard itself fails
     (not a gitian call, or no session id) -- there is no decision to make at all."""
     tool_name = payload.get("tool_name")
-    if not isinstance(tool_name, str) or "gitian" not in tool_name:
+    if not kb_tool.is_kb_tool(tool_name):
         return None
     tool_input = payload.get("tool_input")
     tool_input = tool_input if isinstance(tool_input, dict) else {}

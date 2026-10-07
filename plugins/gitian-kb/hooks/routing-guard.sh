@@ -4,9 +4,9 @@
 # when they ride inside a batch_write (see routing_guard.py for the rule and its fail-open
 # contract).
 #
-# Registered with matcher "mcp__.*(publish_doc|publish_entry|append_entry|batch_write)" -- that matcher is only
-# a coarse pre-filter; routing_guard.py re-checks tool_name itself (must contain "gitian") and is
-# silent on anything else. All JSON handling happens in one python3 invocation; this script never
+# Registered with matcher "mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__(publish_doc|publish_entry|append_entry|batch_write)" -- that
+# matcher is only a coarse pre-filter; routing_guard.py re-checks tool_name itself (must be a tool of
+# the gitian KB server, kb_tool.py) and is silent on anything else. All JSON handling happens in one python3 invocation; this script never
 # reads stdin itself -- it runs routing_guard.py directly so stdin passes straight through, unread
 # and unmodified.
 #

@@ -3,9 +3,11 @@
 
 Invoked as a single python3 process (stdin passed straight through, unread by routing-guard.sh) by
 routing-guard.sh, itself registered as a PreToolUse hook matching
-"mcp__.*(publish_doc|publish_entry|append_entry|batch_write)" -- the three gitian write tools whose
-target KB is decided by ROUTING rather than by the caller, and batch_write, whose `operations[]`
-carry those same three tools.
+"mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__(publish_doc|publish_entry|append_entry|batch_write)" -- the three gitian
+KB write tools whose target KB is decided by ROUTING rather than by the caller, and batch_write,
+whose `operations[]` carry those same three tools. Only the KB server's namespace (kb_tool.py: both
+spellings, case-insensitive on the server segment): the code server's tools are read-only and are
+never this guard's business.
 
 The incident this exists for: an agent told to write to an org's team KB called append_entry with
 neither `kb` nor `repo`. Routing needs `repo` (a doc/entry whose `repo` owner names one of the
@@ -25,8 +27,8 @@ number the batch response's `results[]` uses. The batch has no top-level `kb` --
 resolves its own.
 
 DENY (the one and only condition, all four parts required):
-  1. tool_name contains "gitian" AND either one of publish_doc / publish_entry / append_entry or
-     batch_write with at least one such operation (the hooks.json matcher is a coarse pre-filter;
+  1. tool_name is a tool of the gitian KB server (kb_tool.is_kb_tool) AND either one of publish_doc /
+     publish_entry / append_entry or batch_write with at least one such operation (the hooks.json matcher is a coarse pre-filter;
      this guard is the real gate), and
   2. the call -- or, in a batch, at least one covered operation -- carries no non-blank `kb` and no
      non-blank `repo`, and
@@ -72,6 +74,11 @@ import re
 import subprocess
 import sys
 
+# routing_guard.py runs as a script file, so its own directory is sys.path[0] and the sibling module
+# resolves with no path manipulation (routing-guard.sh exits 0 whatever happens here, so even a
+# missing sibling would only fail open).
+import kb_tool
+
 # Only the three write tools whose destination routing decides. `publish_memory` is absent by design
 # (memories never route, so a missing `repo` doesn't change where one lands), and so are the
 # patch/retract/topic tools.
@@ -101,12 +108,12 @@ def _parse_stdin():
 
 
 def _server_key():
-    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp" -- the key every hook files a server under
+    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp/kb" -- the key every hook files a server under
     (harvest.py's own copy of the same three lines)."""
     base = os.environ.get("GITIAN_KB_URL")
     if not base:
         base = "https://gitian.dev"
-    return base + "/api/mcp"
+    return base + "/api/mcp/kb"
 
 
 def _connection_default_chosen():
@@ -244,7 +251,7 @@ def batch_deny_reason(repo, unrouted):
 def evaluate(payload):
     """Return the deny reason string, or None to allow silently."""
     tool_name = payload.get("tool_name")
-    if not isinstance(tool_name, str) or "gitian" not in tool_name:
+    if not kb_tool.is_kb_tool(tool_name):
         return None
     is_batch = BATCH_WRITE_MARKER in tool_name
     if not is_batch and not any(marker in tool_name for marker in ROUTED_WRITE_MARKERS):

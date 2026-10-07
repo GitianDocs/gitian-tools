@@ -12,7 +12,7 @@
     {
       "name": "gitian-docs",
       "source": "./plugins/gitian-docs",
-      "description": "Keep @gitian annotations and paired docs/ files in sync as code changes, with a PostToolUse nudge so the reminder shows up at the moment it matters."
+      "description": "Keep @gitian annotations and paired docs/ files in sync as code changes, with a PostToolUse nudge so the reminder shows up at the moment it matters — and connect gitian's read-only code server to find and read code, symbols and annotations in your repositories."
     },
     {
       "name": "gitian-spec",

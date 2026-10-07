@@ -21,7 +21,15 @@ HOOKS_DIR = Path(__file__).resolve().parent.parent
 PUBLISH_LINT_SH = HOOKS_DIR / "publish-lint.sh"
 STATE_PY = HOOKS_DIR / "state.py"
 
-SERVER_KEY = "https://gitian.dev/api/mcp"  # default GITIAN_KB_URL, per the state contract
+SERVER_KEY = "https://gitian.dev/api/mcp/kb"  # default GITIAN_KB_URL, per the state contract
+
+# The code server's five tools under both spellings (the gitian-docs plugin's `gitian-code` key, and a
+# hand-wired `gitian-code`). Every hook in this plugin is about the KB server, so none of these may
+# ever be seen as one of its calls -- even though the names contain "gitian" and `code_search` ends
+# in a read suffix.
+CODE_TOOLS = ("code_repos", "code_overview", "code_search", "code_annotation", "code_page")
+CODE_PREFIXES = ("mcp__plugin_gitian-docs_gitian-code__", "mcp__gitian-code__")
+CODE_TOOL_NAMES = tuple(prefix + tool for prefix in CODE_PREFIXES for tool in CODE_TOOLS)
 CONTEXT_PREFIX = "gitian-kb publish lint (advisory -- the call was not blocked):"
 NEAR_MISS_VOCAB = [{"slug": "kb-discipline", "description": "KB discipline", "degree": 4}]
 
@@ -442,6 +450,29 @@ class BatchWriteOperations(PublishLintTestCase):
                 envelope(
                     "mcp__plugin_gitian-kb_gitian__publish_category",
                     tool_input={"slug": "kb-disciplne", "name": "n", "prompt": "p"},
+                )
+            )
+        )
+
+
+class CodeServerIgnored(PublishLintTestCase):
+    def test_a_code_tool_call_is_silent_even_with_a_near_miss_in_its_input(self):
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        for tool_name in CODE_TOOL_NAMES + (
+            # A write-shaped name on the code server is still not the KB's.
+            "mcp__gitian-code__publish_doc",
+            "mcp__plugin_gitian-docs_gitian-code__patch_doc",
+        ):
+            with self.subTest(tool_name=tool_name):
+                proc = self.run_lint(
+                    envelope(tool_name, tool_input={"topics": ["kb-disciplne"], "query": "x"})
+                )
+                self.assert_silent(proc)
+        # Nothing was flagged for the session: the real KB call still gets its one nudge.
+        self.assert_advised(
+            self.run_lint(
+                envelope(
+                    "mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"topics": ["kb-disciplne"]}
                 )
             )
         )

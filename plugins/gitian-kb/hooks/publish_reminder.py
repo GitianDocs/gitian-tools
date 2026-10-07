@@ -35,6 +35,7 @@ import sys
 # put its own directory at sys.path[0] -- `import state`/`import commit_nudge` below resolve their
 # sibling modules directly, no path manipulation needed (matches harvest.py's own house style).
 import commit_nudge as commit_nudge_mod
+import kb_tool
 import state as state_mod
 
 EDIT_TOOL_NAMES = ("Edit", "Write", "NotebookEdit")
@@ -90,9 +91,7 @@ def _command_has_git_commit(command):
 
 
 def _is_publish_tool(tool_name):
-    return isinstance(tool_name, str) and "gitian" in tool_name and any(
-        marker in tool_name for marker in PUBLISH_MARKERS
-    )
+    return kb_tool.is_kb_tool(tool_name) and any(marker in tool_name for marker in PUBLISH_MARKERS)
 
 
 def _tool_use_blocks(line_obj):

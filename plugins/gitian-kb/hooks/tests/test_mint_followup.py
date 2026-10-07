@@ -33,7 +33,7 @@ HOOKS_DIR = Path(__file__).resolve().parent.parent
 HARVEST_SH = HOOKS_DIR / "harvest.sh"
 STATE_PY = HOOKS_DIR / "state.py"
 
-SERVER_KEY = "https://gitian.dev/api/mcp"  # default GITIAN_KB_URL, per the state contract
+SERVER_KEY = "https://gitian.dev/api/mcp/kb"  # default GITIAN_KB_URL, per the state contract
 
 
 def envelope(tool_name, tool_input=None, tool_response=None, session_id="sess-1"):

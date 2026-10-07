@@ -3,7 +3,8 @@
 routing-precondition guard.
 
 Drives it end to end via `sh routing-guard.sh` (matching how hooks.json invokes it, on matcher
-"mcp__.*(publish_doc|publish_entry|append_entry|batch_write)"). The guard keeps no state of its own and reads
+"mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__(publish_doc|publish_entry|append_entry|batch_write)").
+The guard keeps no state of its own and reads
 exactly one field of the nudge layer's -- the cached connection default -- so every test points
 GITIAN_KB_STATE_FILE at a throwaway path, and a real throwaway git repo is created per test that
 needs one, so nothing reads the developer's own state file or checkout.
@@ -25,7 +26,15 @@ HOOKS_DIR = Path(__file__).resolve().parent.parent
 ROUTING_GUARD_SH = HOOKS_DIR / "routing-guard.sh"
 HARVEST_SH = HOOKS_DIR / "harvest.sh"
 
-SERVER_KEY = "https://gitian.dev/api/mcp"  # default GITIAN_KB_URL, per the state contract
+SERVER_KEY = "https://gitian.dev/api/mcp/kb"  # default GITIAN_KB_URL, per the state contract
+
+# The code server's five tools under both spellings (the gitian-docs plugin's `gitian-code` key, and a
+# hand-wired `gitian-code`). Every hook in this plugin is about the KB server, so none of these may
+# ever be seen as one of its calls -- even though the names contain "gitian" and `code_search` ends
+# in a read suffix.
+CODE_TOOLS = ("code_repos", "code_overview", "code_search", "code_annotation", "code_page")
+CODE_PREFIXES = ("mcp__plugin_gitian-docs_gitian-code__", "mcp__gitian-code__")
+CODE_TOOL_NAMES = tuple(prefix + tool for prefix in CODE_PREFIXES for tool in CODE_TOOLS)
 
 GITIAN_TOOL = "mcp__plugin_gitian-kb_gitian__append_entry"
 BATCH_TOOL = "mcp__plugin_gitian-kb_gitian__batch_write"
@@ -322,13 +331,13 @@ class ConnectionDefaultStandsTheGuardDown(RoutingGuardTestCase):
 
     def test_a_default_cached_for_another_server_does_not_count(self):
         self.cache_default_kb(
-            {"kb": "support", "source": "connection"}, server_key="https://other.example/api/mcp"
+            {"kb": "support", "source": "connection"}, server_key="https://other.example/api/mcp/kb"
         )
         self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir)))
 
     def test_the_cache_is_looked_up_under_the_overridden_server_url(self):
         self.cache_default_kb(
-            {"kb": "support", "source": "connection"}, server_key="https://kb.example/api/mcp"
+            {"kb": "support", "source": "connection"}, server_key="https://kb.example/api/mcp/kb"
         )
         env = dict(self.env)
         env["GITIAN_KB_URL"] = "https://kb.example"
@@ -581,6 +590,47 @@ class BatchWriteOperations(RoutingGuardTestCase):
             )
         )
         self.assertNotIn("batch", reason)
+
+
+class CodeServerIgnored(RoutingGuardTestCase):
+    """The guard is about the KB's write tools. The code server's tools are read-only and never its
+    business -- and the proof has to be about the SERVER, not about a tool name that happens to miss
+    a marker, so the control case sends the very same write tools under the code server's names."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo_dir = self.make_repo("git@github.com:acme/widgets.git")
+
+    def test_every_code_tool_is_allowed_in_a_github_checkout(self):
+        for tool_name in CODE_TOOL_NAMES:
+            with self.subTest(tool_name=tool_name):
+                self.assert_allow(
+                    self.run_hook(
+                        envelope(
+                            tool_name=tool_name,
+                            tool_input={"repo": "acme/api", "query": "session"},
+                            cwd=self.repo_dir,
+                        )
+                    )
+                )
+
+    def test_a_write_tool_name_on_the_code_server_is_still_not_the_kbs(self):
+        for prefix in CODE_PREFIXES:
+            for tool in ("publish_doc", "publish_entry", "append_entry", "batch_write"):
+                with self.subTest(tool_name=prefix + tool):
+                    self.assert_allow(
+                        self.run_hook(
+                            envelope(tool_name=prefix + tool, tool_input={"operations": []}, cwd=self.repo_dir)
+                        )
+                    )
+        # Control: the same tool on the KB server, either spelling, is denied.
+        for tool_name in (
+            "mcp__plugin_gitian-kb_gitian__append_entry",
+            "mcp__gitian__append_entry",
+            "mcp__Gitian__append_entry",  # the server segment is case-insensitive
+        ):
+            with self.subTest(tool_name=tool_name):
+                self.assert_deny(self.run_hook(envelope(tool_name=tool_name, cwd=self.repo_dir)))
 
 
 if __name__ == "__main__":

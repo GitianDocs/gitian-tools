@@ -66,12 +66,12 @@ DEFAULT_KB_SLUG = "home"
 
 
 def _server_key():
-    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp" -- mirrors harvest.py's _server_key so
+    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp/kb" -- mirrors harvest.py's _server_key so
     every hook lands on the same state key."""
     base = os.environ.get("GITIAN_KB_URL")
     if not base:
         base = "https://gitian.dev"
-    return base + "/api/mcp"
+    return base + "/api/mcp/kb"
 
 
 def _parse_iso(value):
