@@ -161,6 +161,123 @@ class FiresOnNewSlugs(MintFollowupTestCase):
         self.assertIn("billing-edge", context)
 
 
+def bare_list_response(payload):
+    """The shape Claude Code really hands a PostToolUse hook for an MCP call: a BARE LIST of
+    content blocks, the server's JSON as an escaped string in `text`."""
+    return [{"type": "text", "text": json.dumps(payload)}]
+
+
+class BatchedDescribeRequest(MintFollowupTestCase):
+    """The follow-up asks for ONE batched publish_topic -- a support KB that mints nine
+    integrations from a single case used to be asked for nine calls, one per stub -- and names only
+    what the server reports as MINTED."""
+
+    def minted_payload(self, slugs, extra_warnings=()):
+        return {
+            "slug": "case-0412",
+            "rev": 1,
+            "warnings": [
+                {
+                    "code": "organic_topics_minted",
+                    "path": "topics",
+                    "note": "auto-minted as organic, live immediately: " + ", ".join(slugs),
+                },
+                *extra_warnings,
+            ],
+        }
+
+    def test_asks_for_one_batched_call_naming_every_new_stub(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_memory",
+                tool_response=bare_list_response(self.minted_payload(["zendesk", "hubspot", "slack"])),
+            )
+        )
+        context = self.additional_context(proc)
+        for slug in ("zendesk", "hubspot", "slack"):
+            self.assertIn(slug, context)
+        self.assertIn("ONE publish_topic call", context)
+        self.assertIn("topics: [{slug, description}, ...]", context)
+        self.assertIn("describe them all", context)
+        # The old wording asked for a call per topic; it must not come back.
+        self.assertNotIn("a publish_topic for each", context)
+
+    def test_a_single_stub_is_asked_about_in_the_singular(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_memory",
+                tool_response=bare_list_response(self.minted_payload(["zendesk"])),
+            )
+        )
+        context = self.additional_context(proc)
+        self.assertIn("topic zendesk was auto-minted", context)
+        self.assertIn("describe it", context)
+
+    def test_regression_a_mention_the_kb_declined_to_mint_is_never_asked_about(self):
+        # mint_mentions off: `topics` still mint, `mentions` with no live topic do not. The server
+        # reports both in one response; only the minted slug is a stub that needs a description.
+        payload = self.minted_payload(
+            ["billing"],
+            extra_warnings=[
+                {
+                    "code": "unminted_mentions",
+                    "path": "mentions",
+                    "note": (
+                        "this KB does not mint topics from `mentions` (kb_settings.mint_mentions is "
+                        "off): zendesk, hubspot kept in frontmatter but not linked"
+                    ),
+                }
+            ],
+        )
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_memory",
+                tool_response=bare_list_response(payload),
+            )
+        )
+        context = self.additional_context(proc)
+        self.assertIn("billing", context)
+        self.assertNotIn("zendesk", context)
+        self.assertNotIn("hubspot", context)
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"]["mintPrompted"], ["billing"])
+        self.assertEqual(state["servers"][SERVER_KEY]["undescribedTopics"], ["billing"])
+
+    def test_a_response_with_only_unminted_mentions_stays_silent(self):
+        payload = {
+            "slug": "case-0413",
+            "rev": 1,
+            "warnings": [
+                {
+                    "code": "unminted_mentions",
+                    "path": "mentions",
+                    "note": "this KB does not mint topics from `mentions`: zendesk kept in frontmatter",
+                }
+            ],
+        }
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_memory",
+                tool_response=bare_list_response(payload),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"].get("mintPrompted", []), [])
+
+    def test_the_batched_publish_topic_answer_itself_is_not_a_mint(self):
+        # Describing the stubs must not re-trigger the follow-up it answers.
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_topic",
+                tool_input={"topics": [{"slug": "zendesk", "description": "d"}]},
+                tool_response=bare_list_response(
+                    {"topics": [{"slug": "zendesk", "state": "organic", "degree": 0}], "landed_in": "home"}
+                ),
+            )
+        )
+        self.assert_silent(proc)
+
+
 class RepeatSuppression(MintFollowupTestCase):
     def test_identical_second_envelope_is_silent(self):
         env = envelope(

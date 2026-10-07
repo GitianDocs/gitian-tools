@@ -1,9 +1,10 @@
 #!/bin/sh
 # routing-guard.sh -- PreToolUse hook for the gitian-kb plugin: routing-precondition guard over
-# the three gitian write tools whose destination KB is decided by routing (see routing_guard.py
-# for the rule and its fail-open contract).
+# the three gitian write tools whose destination KB is decided by routing, and over the same three
+# when they ride inside a batch_write (see routing_guard.py for the rule and its fail-open
+# contract).
 #
-# Registered with matcher "mcp__.*(publish_doc|publish_entry|append_entry)" -- that matcher is only
+# Registered with matcher "mcp__.*(publish_doc|publish_entry|append_entry|batch_write)" -- that matcher is only
 # a coarse pre-filter; routing_guard.py re-checks tool_name itself (must contain "gitian") and is
 # silent on anything else. All JSON handling happens in one python3 invocation; this script never
 # reads stdin itself -- it runs routing_guard.py directly so stdin passes straight through, unread

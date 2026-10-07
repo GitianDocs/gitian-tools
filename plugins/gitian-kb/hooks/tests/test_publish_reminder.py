@@ -244,6 +244,16 @@ class PublishSuppression(PublishReminderTestCase):
         self.assert_silent(proc)
         self.assertIsNone(self.flag(SID))
 
+    def test_batch_write_also_suppresses(self):
+        # A scribe that imported through one batch_write has published as much as one that made N
+        # calls; the Stop reminder must not tell that session it published nothing.
+        transcript = self.write_transcript(
+            [edit_line()] * 3 + [publish_line("mcp__plugin_gitian-kb_gitian__batch_write")]
+        )
+        proc = self.run_hook(self.envelope(transcript_path=transcript))
+        self.assert_silent(proc)
+        self.assertIsNone(self.flag(SID))
+
     def test_a_subagent_publish_recorded_in_state_suppresses(self):
         # THE delegation case: a background kb-scribe publishes from its own sidechain
         # transcript, which is a SEPARATE file -- so scanning the parent transcript finds

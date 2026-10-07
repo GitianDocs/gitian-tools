@@ -39,15 +39,18 @@ import state as state_mod
 
 EDIT_TOOL_NAMES = ("Edit", "Write", "NotebookEdit")
 # Mirrors harvest.py's own PUBLISH_MARKERS, patch tools included: a revision records the work as
-# surely as a create does, and patch_doc/body_edits is kb-scribe's normal revision path.
+# surely as a create does, and patch_doc/body_edits is kb-scribe's normal revision path. A
+# batch_write is up to 25 of those in one call, so it counts the same.
 PUBLISH_MARKERS = (
     "publish_doc",
     "publish_memory",
     "publish_entry",
     "publish_topic",
+    "publish_category",
     "append_entry",
     "patch_doc",
     "patch_memory",
+    "batch_write",
 )
 FLAG_NAME = "publish_reminder"
 

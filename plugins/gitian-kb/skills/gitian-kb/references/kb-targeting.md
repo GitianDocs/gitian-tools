@@ -11,19 +11,22 @@ KB (your `home` KB, any custom ones you're a member of, and any **org** KB you h
 and others can be linked to you read-only. Two forms are accepted: a bare slug for a KB of your
 own, or a qualified `login/kb-slug` — which addresses both a KB linked to you (see **Linked KBs**
 below) and an org KB, whose `login` is the org's (see **Org KBs** below). Most sessions never need
-to set it: a write with no `kb` lands in `home`, and a bare slug on a single-target read
-(`get`/`history`) falls through to the rest of your KBs only if it isn't found in the default. Pass
-`kb` explicitly whenever the work belongs to a KB other than `home` — don't assume a `kb` you
-passed on one call carries forward to the next; **every call is independent, and nothing binds a KB
-for the rest of a session**. A scribe's brief always states a `kb` — a label, or the literal `auto`
-meaning "route on `repo`" — and `auto` with no `repo` can only ever land in `home`.
+to set it: a write with no `kb` lands in the **connection's default KB** — `home`, unless the
+human configured this connection with another (see **The connection's default KB** below) — and a
+bare slug on a single-target read (`get`/`history`) falls through to the rest of your KBs only if
+it isn't found in the default. Pass `kb` explicitly whenever the work belongs to a KB other than
+that default — don't assume a `kb` you passed on one call carries forward to the next; **every call
+is independent, and nothing binds a KB for the rest of a session**. A scribe's brief always states a
+`kb` — a label, or the literal `auto` meaning "route on `repo`" — and `auto` with no `repo` can only
+ever land in the connection's default KB (`home`, unless configured otherwise).
 
 - **When to pass it.** Sweeping reads (`search`/`list`/`neighbors`/`file_intents`) sweep every KB
   you belong to *plus* any KB linked to you (see **Linked KBs** below) by default, each hit labeled
   with the KB it came from — pass `kb` only to narrow to one you already know you want. Writes
-  (`publish_*`/`patch_*`/`append_entry`/`retract_item`/`publish_topic`/`retract_topic`) and the
-  single-target reads (`get`, `history`, `topic`) default to `home` — pass `kb` whenever you're
-  working inside a different one, on every call, not just the first. `get`'s `owner` argument is
+  (`publish_*` — topics and categories included — `patch_*`, `append_entry`, `retract_item`,
+  `retract_topic`) and the single-target reads (`get`, `history`, `topic`) default to the connection's default KB (`home`
+  unless configured otherwise) — pass `kb` whenever you're working inside a different one, on every
+  call, not just the first. `get`'s `owner` argument is
   **deprecated and ignored** — it is still accepted so older clients don't break, but it grants
   nothing: a teammate's org work lives in an **org KB** you are a member of (see **Org KBs**
   below), so a plain `get` reaches it, and a bare slug that isn't in any KB you can read is
@@ -41,6 +44,37 @@ meaning "route on `repo`" — and `auto` with no `repo` can only ever land in `h
   create flow and the org KBs panel at `/settings/org`; there is no MCP tool for either), rejects a
   requested slug that collides with a fixed route (`home`, `memory`, `doc`, `entry`, `graph`,
   `linked`) with this code. If you're ever asked to help name a new KB, steer clear of those six.
+
+## The connection's default KB (`default_kb`, `defaulted_to`)
+
+A **connection** — the OAuth connector a human approved, or a personal access token — can carry a
+default KB, chosen by the human on the consent screen or at `/settings/tokens`. It is not a session
+setting and nothing you call changes it; it is how a connector set up for, say, a support KB keeps
+its kb-less writes out of `home` when there is no `repo` to route on (a hosted client with no
+checkout). The order for a write with no `kb`: **an explicit `kb` > org routing on `repo` (docs and
+journal entries) > the connection's default KB > `home`**. Memories never route, so a kb-less memory
+goes to the default.
+
+- **Learn it before you write.** `gitian-kb://vocab` (read it through `read_resource` in a subagent)
+  starts with `kb` — whose vocabulary you are reading — and `default_kb`: `{ "kb": "<label>",
+  "source": "connection" | "home" }`, where a kb-less, unrouted write would land. With no `kb`, the
+  vocabulary you read IS the default KB's, which is the one your kb-less mints go into.
+- **The routing guard honours it.** The PreToolUse guard that refuses a `publish_doc`/
+  `publish_entry`/`append_entry` carrying neither `kb` nor `repo` stands down when the last
+  vocabulary read showed `source: "connection"` and no `unavailable` — the human chose where a
+  kb-less write goes, so there is no silent fork to prevent. With `source: "home"` (or no vocabulary
+  read yet) it still refuses inside a GitHub checkout.
+- **A write the default decided says so**: `defaulted_to: "<label>"` beside `landed_in`, the way a
+  routed write carries `routed_to`. Report it like any landing.
+- **`default_kb_unavailable`** means the connection's default is no longer one you can write
+  (tombstoned, or access changed): the write landed in `home` instead, and the note names the KB.
+  The write is never refused over it. Report it verbatim; fixing the connection is the human's job
+  at `/settings/tokens`, and passing an explicit `kb` sidesteps it.
+- **It changes where the routing advisories fire, not what they mean.** `org_kb_available`,
+  `repo_missing_cannot_route` and `slug_exists_in_other_kb` are about a kb-less write that landed in
+  your own `home`; a write the configured default received carries none of them.
+- **A brief's `kb` still wins.** The scribe passes the brief's `kb` verbatim even when it equals the
+  default — stating the target is what keeps a report about a landing honest.
 
 ## Linked KBs (`login/kb-slug`)
 
@@ -112,8 +146,9 @@ invite to accept and nothing to revoke — and **write and read are separate gra
   subagent's.
 - **Docs AND journal entries about an org's repos route there by default.** A `publish_doc`,
   `publish_entry` or `append_entry` with **no `kb`** whose `repo` is `<org>/<name>` (the owner
-  matched case-insensitively) lands in `<org>/team`, not in `home`. **Memories never route** — a
-  `publish_memory` stays in `home` whatever its `repo` says. The response says where it went in
+  matched case-insensitively) lands in `<org>/team`, not in `home` — routing outranks the
+  connection's default KB too. **Memories never route** — a `publish_memory` stays in your default
+  KB (`home` unless the connection names another) whatever its `repo` says. The response says where it went in
   `routed_to`, and carries `kb_read_paywalled` when that KB is one you can write but not read. An
   explicit `kb` always wins — routing is the default, never an override — and a `kb` that doesn't
   resolve answers `not_found` rather than quietly falling back to `home`.
@@ -163,7 +198,7 @@ invite to accept and nothing to revoke — and **write and read are separate gra
 ## Staying in sync mid-session (`vocab_rev`)
 
 Every successful tool response carries `vocab_rev` — a counter scoped to the **target KB** (the
-`kb` a write/single-target read resolves to, or your default `home` when omitted) that bumps on
+`kb` a write/single-target read resolves to, or your connection's default KB when omitted) that bumps on
 any vocabulary write to that KB: category CRUD, a topic mint/describe/tombstone/merge, including
 an auto-mint that happened as a side effect of someone else's publish. Track the value you last saw
 *per KB* — a `vocab_rev` from a custom KB and one from `home` are different counters and never
@@ -174,10 +209,10 @@ what you think, minting a near-duplicate of something a teammate (or an earlier 
 session) just minted, or missing a category that now fits. This is cheap: the vocab resource is
 small and the freshness signal rides on calls you're already making — no polling, no extra round
 trip. One catch: `gitian-kb://vocab` is a static URI with no per-read `kb` argument, so a resource
-read always serves your **default** KB, which is always `home` (nothing binds another) — a session
-working a non-default `kb` sees that KB's `vocab_rev` on every response but has no resource read
-that reflects it, so don't chase that counter against `gitian-kb://vocab`; there's nothing yet to
-re-read it against. (The `read_resource` tool takes a `kb`, so an agent reading the vocab that way
+read always serves your **default** KB — the connection's default, `home` unless configured (the
+payload's own `kb` field says which) — so a session working a non-default `kb` sees that KB's
+`vocab_rev` on every response but has no resource read that reflects it; don't chase that counter
+against `gitian-kb://vocab`, there's nothing yet to re-read it against. (The `read_resource` tool takes a `kb`, so an agent reading the vocab that way
 can target the KB it is writing into.) When the drift is more than "one topic changed" in your
 default KB, dispatch `kb-librarian` for the vocab-delta refresh instead of re-reading and
 re-diffing it yourself.

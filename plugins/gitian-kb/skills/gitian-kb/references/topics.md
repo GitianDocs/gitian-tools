@@ -47,14 +47,28 @@ correlation signal besides an explicit `related`/wikilink — so linking is not 
   existing slug that already names the concept before typing a new one; only mint when the concept
   is genuinely absent. `publish_topic` is how a stub stops being one: it attaches a real
   description (or refreshes an existing one's) — call it when the concept deserves documentation,
-  not to make a link "count", which it never affected. The one slug family that stays inert is a
+  not to make a link "count", which it never affected. Several stubs at once are ONE call:
+  `publish_topic({topics: [{slug, description}, ...]})` (1-50, instead of `slug` + `description`;
+  the response lists each as `{slug, state, degree}`). Describe only slugs the write reported as
+  minted — an `unminted_mentions` slug was deliberately not minted. The one slug family that stays inert is a
   **tombstoned** one: a user veto is never overruled by frontmatter, so the link is stored but
   excluded from relatedness (advisory `tombstoned_topics` warning) until someone deliberately
   re-mints it via `publish_topic`.
+- **A KB can stop minting from `mentions`.** An admin may switch **Mentions mint topics** off on
+  the KB's settings page (a support KB naming nine integrations per case would otherwise mint nine
+  stubs per case). Then a `mentions` slug with no live topic behind it is neither minted nor
+  linked — it stays in the frontmatter — and the write carries `unminted_mentions` naming it;
+  `topics` slugs mint exactly as before, and a mention of an existing live topic still links.
+  That warning is a statement of what the KB's policy did, not a fault: do not re-send the write
+  to "fix" it, and do not move a slug from `mentions` to `topics` just to make it mint unless the
+  item really is about it.
 - **`category`** — at most one, `null` if none. Pick from `gitian-kb://vocab`'s categories using
   their routing prompts; an unknown category slug gets the same late-binding treatment
-  (`unknown_category` warning). Categories are authored in the `/kb` UI, not minted over MCP —
-  when nothing in the vocabulary fits, `null` is the answer, never an invented slug.
+  (`unknown_category` warning). A category is authored with `publish_category` (`slug`, `name`, the
+  routing `prompt`; create-or-update, keeps a rewritten category's tab position) or in the `/kb` UI,
+  and an org KB's categories are its admin's (`forbidden` for anyone else); there is no MCP
+  retract. Authoring one is a vocabulary decision for the primary — when nothing in the vocabulary
+  fits and the brief did not ask for a new category, `null` is the answer, never an invented slug.
 - **Update-over-create bias.** Before minting a brand-new `doc` slug, check whether an existing
   *active* doc already owns the same primary topics — `list({topic: "<slug>"})` or the `topic`
   tool's member list — and update that doc instead of publishing a near-duplicate. The server
@@ -64,8 +78,8 @@ correlation signal besides an explicit `related`/wikilink — so linking is not 
 - **`neighbors`** on a slug returns each hit's `why.topics` (the shared topics driving the score,
   richest first) and `why.explicit` (non-null when an explicit link floors the weight at 1.0) — use
   it to understand *why* something surfaced, not just *that* it did.
-- **`topic`** (hub view) and **`publish_topic`**/**`retract_topic`** (mint/update/tombstone) round
-  out the toolset for working with the vocabulary directly — see their tool descriptions for the
+- **`topic`** (hub view), **`publish_topic`**/**`retract_topic`** (mint/update/tombstone) and
+  **`publish_category`** round out the toolset for working with the vocabulary directly — see their tool descriptions for the
   exact shapes.
 
 ## Who chooses topics

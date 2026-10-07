@@ -3,16 +3,17 @@
 routing-precondition guard.
 
 Drives it end to end via `sh routing-guard.sh` (matching how hooks.json invokes it, on matcher
-"mcp__.*(publish_doc|publish_entry|append_entry)"). The guard holds no state at all, so unlike the
-nudge-layer tests there is no GITIAN_KB_STATE_FILE to isolate -- but the env is still copied and a
-real throwaway git repo is created per test that needs one, so nothing reads the developer's own
-checkout.
+"mcp__.*(publish_doc|publish_entry|append_entry|batch_write)"). The guard keeps no state of its own and reads
+exactly one field of the nudge layer's -- the cached connection default -- so every test points
+GITIAN_KB_STATE_FILE at a throwaway path, and a real throwaway git repo is created per test that
+needs one, so nothing reads the developer's own state file or checkout.
 
 Runnable directly: python3 plugins/gitian-kb/hooks/tests/test_routing_guard.py
 """
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,8 +23,12 @@ from pathlib import Path
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent
 ROUTING_GUARD_SH = HOOKS_DIR / "routing-guard.sh"
+HARVEST_SH = HOOKS_DIR / "harvest.sh"
+
+SERVER_KEY = "https://gitian.dev/api/mcp"  # default GITIAN_KB_URL, per the state contract
 
 GITIAN_TOOL = "mcp__plugin_gitian-kb_gitian__append_entry"
+BATCH_TOOL = "mcp__plugin_gitian-kb_gitian__batch_write"
 
 
 def envelope(tool_name=GITIAN_TOOL, tool_input=None, cwd="/tmp", session_id="sess-1"):
@@ -39,12 +44,30 @@ def envelope(tool_name=GITIAN_TOOL, tool_input=None, cwd="/tmp", session_id="ses
 
 class RoutingGuardTestCase(unittest.TestCase):
     def setUp(self):
+        # The guard reads ONE thing from the nudge layer's state file -- the cached connection
+        # default -- so every test points it at a throwaway path (absent = nothing cached) rather
+        # than at the developer's own ~/.claude/gitian-kb/state.json.
+        self.state_dir = tempfile.mkdtemp(prefix="gks-routing-state-")
+        self.state_file = os.path.join(self.state_dir, "state.json")
         self.env = dict(os.environ)
+        self.env["GITIAN_KB_STATE_FILE"] = self.state_file
+        self.env.pop("GITIAN_KB_URL", None)
         self.repos = []
 
     def tearDown(self):
+        shutil.rmtree(self.state_dir, ignore_errors=True)
         for path in self.repos:
             shutil.rmtree(path, ignore_errors=True)
+
+    def cache_default_kb(self, default_kb, server_key=SERVER_KEY):
+        """Write the state file the way harvest.py leaves it after a vocabulary read."""
+        state = {
+            "schemaVersion": 1,
+            "servers": {server_key: {"defaultKb": default_kb}},
+            "sessions": {},
+        }
+        with open(self.state_file, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
 
     def make_repo(self, remote=None):
         """A throwaway git repo, optionally with an `origin` remote. `git init` needs no user
@@ -261,6 +284,303 @@ class FailOpen(RoutingGuardTestCase):
         )
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout, "")
+
+
+class ConnectionDefaultStandsTheGuardDown(RoutingGuardTestCase):
+    """A human-chosen connection default (`default_kb.source == "connection"`, not unavailable)
+    means a kb-less write has a deliberate destination -- the hosted client with no checkout the
+    setting exists for. Every other cache state leaves the refusal exactly as it was."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo_dir = self.make_repo("git@github.com:acme/widgets.git")
+
+    def test_allows_a_kb_less_repo_less_write_when_the_default_was_chosen(self):
+        self.cache_default_kb({"kb": "support", "source": "connection"})
+        for tool in (
+            "mcp__plugin_gitian-kb_gitian__publish_doc",
+            "mcp__plugin_gitian-kb_gitian__publish_entry",
+            "mcp__plugin_gitian-kb_gitian__append_entry",
+            "mcp__gitian__append_entry",
+        ):
+            self.assert_allow(self.run_hook(envelope(tool_name=tool, cwd=self.repo_dir)))
+
+    def test_regression_a_home_default_still_refuses(self):
+        # `home` is what the connection falls back to when nobody chose anything: that is the
+        # silent fork the guard exists for.
+        self.cache_default_kb({"kb": "home", "source": "home"})
+        self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir)))
+
+    def test_regression_a_chosen_default_that_is_unavailable_still_refuses(self):
+        # The configured KB is gone and writes now fall back to `home` -- not a deliberate landing.
+        self.cache_default_kb({"kb": "home", "source": "connection", "unavailable": "Support"})
+        self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir)))
+
+    def test_no_cache_at_all_still_refuses(self):
+        self.assertFalse(os.path.exists(self.state_file))
+        self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir)))
+
+    def test_a_default_cached_for_another_server_does_not_count(self):
+        self.cache_default_kb(
+            {"kb": "support", "source": "connection"}, server_key="https://other.example/api/mcp"
+        )
+        self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir)))
+
+    def test_the_cache_is_looked_up_under_the_overridden_server_url(self):
+        self.cache_default_kb(
+            {"kb": "support", "source": "connection"}, server_key="https://kb.example/api/mcp"
+        )
+        env = dict(self.env)
+        env["GITIAN_KB_URL"] = "https://kb.example"
+        self.assert_allow(self.run_hook(envelope(cwd=self.repo_dir), env=env))
+        # ...and the default URL's empty slot is still refused.
+        self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir)))
+
+    def test_an_unreadable_or_malformed_cache_degrades_to_the_original_refusal(self):
+        # Fail open means "never block on a hiccup"; it does not mean "allow whenever the cache is
+        # confusing". A malformed cache cannot prove the destination is deliberate.
+        for raw in ("{not json ][", "[]", '{"servers": []}', '{"servers": {"%s": 3}}' % SERVER_KEY):
+            with open(self.state_file, "w", encoding="utf-8") as fh:
+                fh.write(raw)
+            self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir)))
+        for bad in ("support", ["connection"], {"source": ["connection"]}, {"source": "Connection"}):
+            self.cache_default_kb(bad)
+            self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir)))
+
+    def test_an_explicit_kb_or_repo_is_allowed_whatever_the_cache_says(self):
+        self.cache_default_kb({"kb": "home", "source": "home"})
+        self.assert_allow(self.run_hook(envelope(tool_input={"kb": "home"}, cwd=self.repo_dir)))
+        self.assert_allow(
+            self.run_hook(envelope(tool_input={"repo": "acme/widgets"}, cwd=self.repo_dir))
+        )
+
+    def test_end_to_end_a_vocab_read_through_harvest_is_what_arms_the_allowance(self):
+        # The producer and the consumer are two scripts; this is the one test that proves they
+        # agree on the key and the shape, using the bare-list payload a live hook receives.
+        resource = {
+            "uri": "gitian-kb://vocab",
+            "mimeType": "application/json",
+            "text": json.dumps(
+                {
+                    "kb": "support",
+                    "default_kb": {"kb": "support", "source": "connection"},
+                    "topics": [],
+                }
+            ),
+        }
+        harvest_payload = {
+            "session_id": "sess-1",
+            "cwd": "/repo",
+            "hook_event_name": "PostToolUse",
+            "tool_name": "mcp__plugin_gitian-kb_gitian__read_resource",
+            "tool_input": {"uri": "gitian-kb://vocab"},
+            "tool_response": [{"type": "text", "text": json.dumps(resource)}],
+        }
+        self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir)))
+        proc = subprocess.run(
+            ["sh", str(HARVEST_SH)],
+            input=json.dumps(harvest_payload),
+            capture_output=True,
+            text=True,
+            env=self.env,
+            timeout=15,
+        )
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assert_allow(self.run_hook(envelope(cwd=self.repo_dir)))
+
+
+def batch_envelope(operations, tool_name=BATCH_TOOL, cwd="/tmp"):
+    """A PreToolUse payload for a batch_write: `operations` is `[{tool, args}]`, tool names bare."""
+    return envelope(tool_name=tool_name, tool_input={"operations": operations}, cwd=cwd)
+
+
+def op(tool, **args):
+    return {"tool": tool, "args": args}
+
+
+class BatchWriteOperations(RoutingGuardTestCase):
+    """A batch_write runs its operations through the same per-tool branches as standalone calls,
+    so an operation with neither `kb` nor `repo` forks into `home` exactly like the standalone call
+    this guard already refuses -- it must not be the way round the guard. The batch has no
+    top-level `kb`; each operation resolves its own."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo_dir = self.make_repo("git@github.com:acme/widgets.git")
+
+    def run_batch(self, operations, **kwargs):
+        return self.run_hook(batch_envelope(operations, cwd=self.repo_dir, **kwargs))
+
+    def test_regression_hooks_json_routes_batch_write_to_the_guard_and_the_lint(self):
+        # The gap this closes: both PreToolUse matchers named the standalone tools only, so a
+        # batch_write never reached either script however they handled operations.
+        hooks = json.loads((HOOKS_DIR / "hooks.json").read_text(encoding="utf-8"))
+        matchers = {
+            entry["hooks"][0]["command"].rsplit("/", 1)[-1].rstrip('"'): entry["matcher"]
+            for entry in hooks["hooks"]["PreToolUse"]
+        }
+        for script in ("routing-guard.sh", "publish-lint.sh"):
+            self.assertTrue(
+                re.search(matchers[script], BATCH_TOOL), msg="%s matcher misses batch_write" % script
+            )
+            self.assertTrue(re.search(matchers[script], "mcp__gitian__batch_write"))
+        # A category carries no topics and no routing, so neither script matches it.
+        for script in ("routing-guard.sh", "publish-lint.sh"):
+            self.assertFalse(
+                re.search(matchers[script], "mcp__plugin_gitian-kb_gitian__publish_category")
+            )
+
+    def test_denies_naming_the_offending_operation_index_and_its_tool(self):
+        reason = self.assert_deny(
+            self.run_batch(
+                [
+                    op("publish_doc", slug="a", kb="acme/team"),
+                    op("append_entry", section="more"),
+                    op("publish_memory", slug="m"),
+                ]
+            )
+        )
+        self.assertIn("operation 1 (append_entry)", reason)
+        self.assertNotIn("0 (", reason)
+        self.assertNotIn("2 (", reason)
+        self.assertIn('`repo: "acme/widgets"`', reason)
+        self.assertIn("Nothing in the batch ran", reason)
+        self.assertIn("re-send the batch", reason)
+
+    def test_names_every_offending_operation_when_several_lack_both(self):
+        reason = self.assert_deny(
+            self.run_batch(
+                [
+                    op("publish_entry", scope="work"),
+                    op("publish_doc", slug="ok", repo="acme/widgets"),
+                    op("publish_doc", slug="bad"),
+                ]
+            )
+        )
+        self.assertIn("operations 0 (publish_entry), 2 (publish_doc)", reason)
+
+    def test_a_long_offender_list_is_capped_and_counted(self):
+        reason = self.assert_deny(self.run_batch([op("append_entry") for _ in range(13)]))
+        self.assertIn("9 (append_entry), and 3 more", reason)
+        self.assertNotIn("10 (", reason)
+
+    def test_denies_under_both_server_spellings_and_deterministically(self):
+        operations = [op("publish_doc", slug="a")]
+        for tool_name in (BATCH_TOOL, "mcp__gitian__batch_write"):
+            for _ in range(2):
+                self.assert_deny(self.run_batch(operations, tool_name=tool_name))
+
+    def test_blank_and_null_args_count_as_absent(self):
+        for args in ({"kb": "", "repo": ""}, {"kb": None, "repo": None}, {"repo": "  "}):
+            self.assert_deny(self.run_batch([{"tool": "append_entry", "args": args}]))
+
+    def test_allows_when_every_covered_operation_names_a_kb_or_a_repo(self):
+        self.assert_allow(
+            self.run_batch(
+                [
+                    op("publish_doc", slug="a", kb="home"),
+                    op("publish_entry", scope="work", repo="acme/widgets"),
+                    op("append_entry", kb="acme/team", section="x"),
+                ]
+            )
+        )
+
+    def test_operations_of_other_tools_are_not_this_guards_business(self):
+        # Memories never route, patches revise an existing item in its own KB, and an unknown or
+        # nested tool is refused by the server itself.
+        self.assert_allow(
+            self.run_batch(
+                [
+                    op("publish_memory", slug="m"),
+                    op("patch_doc", slug="d", status="landed"),
+                    op("patch_memory", slug="m", summary="s"),
+                    op("retract_item", slug="x"),
+                    op("batch_write", operations=[]),
+                    op("mcp__gitian__publish_doc", slug="namespaced"),
+                    op("nonsense"),
+                ]
+            )
+        )
+
+    def test_malformed_operations_fail_open_and_never_hide_a_real_offender(self):
+        for tool_input in (
+            {},
+            {"operations": None},
+            {"operations": "publish_doc"},
+            {"operations": {"tool": "publish_doc", "args": {}}},
+            {"operations": []},
+            {"operations": [None, "x", 3, [], {}]},
+            {"operations": [{"tool": "publish_doc"}, {"tool": "publish_doc", "args": "x"}]},
+            {"operations": [{"tool": None, "args": {}}, {"args": {}}]},
+        ):
+            self.assert_allow(
+                self.run_hook(
+                    envelope(tool_name=BATCH_TOOL, tool_input=tool_input, cwd=self.repo_dir)
+                )
+            )
+        # Garbage around a genuine offender does not shield it, and the index is its real one.
+        reason = self.assert_deny(
+            self.run_batch([None, {"tool": "publish_doc"}, "x", op("append_entry", section="s")])
+        )
+        self.assertIn("operation 3 (append_entry)", reason)
+
+    def test_a_top_level_kb_or_repo_on_the_batch_does_not_satisfy_its_operations(self):
+        # The batch schema takes neither; each operation resolves its own, so neither is evidence
+        # about where an operation lands.
+        self.assert_deny(
+            self.run_hook(
+                envelope(
+                    tool_name=BATCH_TOOL,
+                    tool_input={
+                        "kb": "acme/team",
+                        "repo": "acme/widgets",
+                        "operations": [op("append_entry", section="s")],
+                    },
+                    cwd=self.repo_dir,
+                )
+            )
+        )
+
+    def test_a_non_gitian_server_batch_write_is_never_denied(self):
+        self.assert_allow(
+            self.run_batch([op("publish_doc", slug="a")], tool_name="mcp__other__batch_write")
+        )
+
+    def test_fails_open_without_a_github_origin_like_the_standalone_guard(self):
+        operations = [op("publish_doc", slug="a")]
+        self.assert_allow(
+            self.run_hook(batch_envelope(operations, cwd=self.make_plain_dir()))
+        )
+        self.assert_allow(
+            self.run_hook(batch_envelope(operations, cwd=self.make_repo("https://github.com/acme")))
+        )
+        self.assert_allow(
+            self.run_hook(
+                envelope(tool_name=BATCH_TOOL, tool_input={"operations": operations}, cwd="")
+            )
+        )
+
+    def test_a_chosen_connection_default_stands_the_guard_down_for_a_batch_too(self):
+        operations = [op("publish_doc", slug="a"), op("append_entry", section="s")]
+        self.cache_default_kb({"kb": "support", "source": "connection"})
+        self.assert_allow(self.run_batch(operations))
+        # ...and every other cache state keeps the refusal.
+        self.cache_default_kb({"kb": "home", "source": "home"})
+        self.assert_deny(self.run_batch(operations))
+        self.cache_default_kb({"kb": "gone", "source": "connection", "unavailable": True})
+        self.assert_deny(self.run_batch(operations))
+
+    def test_the_standalone_reason_is_unchanged(self):
+        # Factoring the remedy out for the batch wording must not move a word of the original.
+        reason = self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir)))
+        self.assertTrue(
+            reason.startswith(
+                "gitian-kb routing guard: this write names no `kb` and no `repo`, so it has "
+                "nothing to route on and can only land in `home` -- in an org checkout that "
+                "silently forks the team's KB. Set one of them and re-send:\n- `repo: "
+            )
+        )
+        self.assertNotIn("batch", reason)
 
 
 if __name__ == "__main__":

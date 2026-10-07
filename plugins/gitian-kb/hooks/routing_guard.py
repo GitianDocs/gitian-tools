@@ -3,8 +3,9 @@
 
 Invoked as a single python3 process (stdin passed straight through, unread by routing-guard.sh) by
 routing-guard.sh, itself registered as a PreToolUse hook matching
-"mcp__.*(publish_doc|publish_entry|append_entry)" -- the three gitian write tools whose target KB
-is decided by ROUTING rather than by the caller.
+"mcp__.*(publish_doc|publish_entry|append_entry|batch_write)" -- the three gitian write tools whose
+target KB is decided by ROUTING rather than by the caller, and batch_write, whose `operations[]`
+carry those same three tools.
 
 The incident this exists for: an agent told to write to an org's team KB called append_entry with
 neither `kb` nor `repo`. Routing needs `repo` (a doc/entry whose `repo` owner names one of the
@@ -13,17 +14,41 @@ destination is `home` -- the team journal forked silently into a personal KB. Pr
 the primary fix; this hook is the backstop that makes the silent case impossible to miss. Memories
 never route, so they are never guarded; neither are the patch/retract/topic tools.
 
-DENY (the one and only condition, all three parts required):
-  1. tool_name contains "gitian" AND one of publish_doc / publish_entry / append_entry (the
-     hooks.json matcher is a coarse pre-filter; this guard is the real gate), and
-  2. tool_input carries no non-blank `kb` and no non-blank `repo`, and
-  3. the payload's cwd is inside a git repo whose `origin` remote reduces to a clean GitHub-style
+A `batch_write` is the same write made in bulk: each operation `{tool, args}` is dispatched through
+the same per-tool branch a standalone call reaches, so an operation naming publish_doc /
+publish_entry / append_entry with neither `kb` nor `repo` in its `args` forks into `home` exactly
+like the standalone call would -- and, unguarded, would be the way round this guard. The batch is
+judged operation by operation (an operation naming any other tool, or one whose shape is not
+`{tool: str, args: object}`, is not this guard's business and contributes nothing: the server fails
+it by itself), and the one deny names every offending operation by its zero-based `index`, the same
+number the batch response's `results[]` uses. The batch has no top-level `kb` -- each operation
+resolves its own.
+
+DENY (the one and only condition, all four parts required):
+  1. tool_name contains "gitian" AND either one of publish_doc / publish_entry / append_entry or
+     batch_write with at least one such operation (the hooks.json matcher is a coarse pre-filter;
+     this guard is the real gate), and
+  2. the call -- or, in a batch, at least one covered operation -- carries no non-blank `kb` and no
+     non-blank `repo`, and
+  3. the connection has no default KB a human chose (see below), and
+  4. the payload's cwd is inside a git repo whose `origin` remote reduces to a clean GitHub-style
      `owner/name` pair -- one `git remote get-url origin` call, the same normalization
      session-context.sh and orientation-check.sh use, so the `repo` this reason suggests is
      byte-identical to the one those surfaces already told the model to use.
 Anything else is allowed, silently.
 
-Deliberately STATELESS and deterministic -- unlike the nudge-layer hooks (see state.py), this is a
+Condition 3 is the one place this guard reads state. A connection (an OAuth connector or a token)
+can carry a default KB a HUMAN chose at consent or in settings -- the whole point of which is that a
+kb-less write from a client with no checkout lands somewhere deliberate rather than in `home`. The
+vocabulary read advertises it as `default_kb: {kb, source, unavailable?}` and harvest.py caches the
+last one per server (`servers.<key>.defaultKb`); a cached `source` of "connection" with no
+`unavailable` means such a write cannot silently fork anything, so the guard stands down. A missing
+cache, an unreadable state file, `source: "home"` (the unconfigured default) or an `unavailable`
+default (the configured KB is gone and writes fall back to `home`) all leave the guard exactly as it
+was: the cache can only ever REMOVE a refusal when it positively says the destination is deliberate,
+and any failure to read it degrades to the original behaviour rather than to silence.
+
+Deliberately otherwise STATELESS and deterministic -- unlike the nudge-layer hooks (see state.py), this is a
 precondition on the call rather than advice about the session, so it must not go quiet after the
 first firing: an identical re-send still cannot route. The remedy travels in the reason itself
 (set `repo`, or pass `kb` explicitly -- `"home"` for genuinely personal work), so a caller is never
@@ -42,6 +67,7 @@ Tests: plugins/gitian-kb/hooks/tests/test_routing_guard.py (drives it via routin
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -50,6 +76,12 @@ import sys
 # (memories never route, so a missing `repo` doesn't change where one lands), and so are the
 # patch/retract/topic tools.
 ROUTED_WRITE_MARKERS = ("publish_doc", "publish_entry", "append_entry")
+
+# batch_write's operations name a tool by its bare name, so inside a batch the match is exact (the
+# substring match above exists for the namespaced `mcp__..._gitian__publish_doc` spelling).
+BATCH_WRITE_MARKER = "batch_write"
+# Offending operations listed by index in a deny reason; the rest are counted, not enumerated.
+MAX_LISTED_OPERATIONS = 10
 
 GIT_TIMEOUT_SECONDS = 2
 
@@ -68,6 +100,34 @@ def _parse_stdin():
     return payload if isinstance(payload, dict) else {}
 
 
+def _server_key():
+    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp" -- the key every hook files a server under
+    (harvest.py's own copy of the same three lines)."""
+    base = os.environ.get("GITIAN_KB_URL")
+    if not base:
+        base = "https://gitian.dev"
+    return base + "/api/mcp"
+
+
+def _connection_default_chosen():
+    """True only when the cached vocabulary read says this connection's default KB was CHOSEN by a
+    human (`source` "connection") and is still writable (no `unavailable`). Any failure -- no state
+    module, no file, a malformed shape -- is False, which keeps the refusal. `state` is imported
+    here, inside the guard, because an ImportError at module level would escape the top-level
+    fail-open handler below and exit non-zero."""
+    try:
+        import state as state_mod
+
+        servers = state_mod.load().get("servers")
+        server = servers.get(_server_key()) if isinstance(servers, dict) else None
+        default = server.get("defaultKb") if isinstance(server, dict) else None
+        if not isinstance(default, dict):
+            return False
+        return default.get("source") == "connection" and not default.get("unavailable")
+    except Exception:
+        return False
+
+
 def _blank(value):
     """A field counts as absent when it's missing, null, or an all-whitespace string."""
     if value is None:
@@ -75,6 +135,25 @@ def _blank(value):
     if not isinstance(value, str):
         return False  # a non-string `kb`/`repo` is the server's problem, not this hook's
     return value.strip() == ""
+
+
+def _unrouted_operations(operations):
+    """The `(index, tool)` of every batch operation that names a routed write tool and carries
+    neither `kb` nor `repo`. Anything that is not a `{tool: str, args: object}` mapping, and any
+    other tool, contributes nothing -- the server refuses those operations on its own."""
+    if not isinstance(operations, list):
+        return []
+    found = []
+    for index, operation in enumerate(operations):
+        if not isinstance(operation, dict):
+            continue
+        tool = operation.get("tool")
+        args = operation.get("args")
+        if tool not in ROUTED_WRITE_MARKERS or not isinstance(args, dict):
+            continue
+        if _blank(args.get("kb")) and _blank(args.get("repo")):
+            found.append((index, tool))
+    return found
 
 
 def normalize_remote(remote_url):
@@ -117,11 +196,9 @@ def _origin_repo(cwd):
     return normalize_remote(proc.stdout)
 
 
-def deny_reason(repo):
+def _remedy(repo):
     return (
-        "gitian-kb routing guard: this write names no `kb` and no `repo`, so it has nothing to "
-        "route on and can only land in `home` -- in an org checkout that silently forks the "
-        "team's KB. Set one of them and re-send:\n"
+        'Set one of them and re-send:\n'
         '- `repo: "%s"` (this checkout\'s origin) -- a doc or journal entry whose repo owner is a '
         "gitian org routes to `<org>/team`; the response says where it went in `landed_in`.\n"
         '- or pass `kb` explicitly -- `"home"` for a personal note, `"<org>/team"` for team work. '
@@ -131,21 +208,64 @@ def deny_reason(repo):
     )
 
 
+def deny_reason(repo):
+    return (
+        "gitian-kb routing guard: this write names no `kb` and no `repo`, so it has nothing to "
+        "route on and can only land in `home` -- in an org checkout that silently forks the "
+        "team's KB. " + _remedy(repo)
+    )
+
+
+def batch_deny_reason(repo, unrouted):
+    """The deny reason for a batch: the same remedy, led by which operations need it."""
+    names = ", ".join("%d (%s)" % (index, tool) for index, tool in unrouted[:MAX_LISTED_OPERATIONS])
+    if len(unrouted) > MAX_LISTED_OPERATIONS:
+        names += ", and %d more" % (len(unrouted) - MAX_LISTED_OPERATIONS)
+    many = len(unrouted) > 1
+    return (
+        "gitian-kb routing guard: batch_write operation%s %s name%s no `kb` and no `repo` in %s "
+        "`args` (the batch itself takes no `kb`; each operation resolves its own), so %s nothing "
+        "to route on and can only land in `home` -- in an org checkout that silently forks the "
+        "team's KB. Nothing in the batch ran. "
+        % (
+            "s" if many else "",
+            names,
+            "" if many else "s",
+            "their" if many else "its",
+            "they have" if many else "it has",
+        )
+    ) + _remedy(repo).replace(
+        "Set one of them and re-send:",
+        "Set one of them on each of those operations and re-send the batch:",
+        1,
+    )
+
+
 def evaluate(payload):
     """Return the deny reason string, or None to allow silently."""
     tool_name = payload.get("tool_name")
     if not isinstance(tool_name, str) or "gitian" not in tool_name:
         return None
-    if not any(marker in tool_name for marker in ROUTED_WRITE_MARKERS):
+    is_batch = BATCH_WRITE_MARKER in tool_name
+    if not is_batch and not any(marker in tool_name for marker in ROUTED_WRITE_MARKERS):
         return None
 
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):
         return None  # nothing to inspect -- fail open
-    if not _blank(tool_input.get("kb")):
-        return None  # an explicit kb always wins; nothing to warn about
-    if not _blank(tool_input.get("repo")):
-        return None  # routing has what it needs
+    unrouted = []
+    if is_batch:
+        unrouted = _unrouted_operations(tool_input.get("operations"))
+        if not unrouted:
+            return None  # every covered operation names a kb or a repo (or none is covered)
+    else:
+        if not _blank(tool_input.get("kb")):
+            return None  # an explicit kb always wins; nothing to warn about
+        if not _blank(tool_input.get("repo")):
+            return None  # routing has what it needs
+
+    if _connection_default_chosen():
+        return None  # a human chose where a kb-less write lands; nothing to fork
 
     cwd = payload.get("cwd")
     if not isinstance(cwd, str) or not cwd:
@@ -155,7 +275,7 @@ def evaluate(payload):
     if not repo:
         return None  # no GitHub-style origin to suggest -- fail open
 
-    return deny_reason(repo)
+    return batch_deny_reason(repo, unrouted) if is_batch else deny_reason(repo)
 
 
 def main():

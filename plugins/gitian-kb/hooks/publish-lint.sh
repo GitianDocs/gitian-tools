@@ -1,7 +1,7 @@
 #!/bin/sh
 # publish-lint.sh -- PreToolUse hook for the gitian-kb plugin: advisory publish lint over gitian
-# publish/append/patch calls (see publish_lint.py for the rule and state.py for the state
-# contract). It never blocks: advice travels as additionalContext, with no permissionDecision.
+# publish/append/patch calls, batch_write's operations included (see publish_lint.py for the rule
+# and state.py for the state contract). It never blocks: advice travels as additionalContext, with no permissionDecision.
 #
 # Registered with the publish/append/patch matcher publish_lint.py's docstring quotes -- that
 # matcher is only a coarse pre-filter; publish_lint.py re-checks tool_name itself (must contain

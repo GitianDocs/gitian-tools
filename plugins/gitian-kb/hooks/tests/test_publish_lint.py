@@ -291,5 +291,161 @@ class NearMissRule(PublishLintTestCase):
         self.assertEqual(self.dump_state()["sessions"]["sess-1"]["lintHashes"], [])
 
 
+BATCH_TOOL = "mcp__plugin_gitian-kb_gitian__batch_write"
+
+
+def batch_envelope(operations, tool_name=BATCH_TOOL):
+    return envelope(tool_name, tool_input={"operations": operations})
+
+
+def op(tool, **args):
+    return {"tool": tool, "args": args}
+
+
+class BatchWriteOperations(PublishLintTestCase):
+    """A batch_write carries up to 25 of the six linted writes in `operations[{tool, args}]`, the
+    tool named bare. The lint reads each covered operation's topics/mentions and gives ONE
+    advisory for the whole call -- never a block, never one nudge per operation."""
+
+    def test_regression_a_typo_inside_a_batch_operation_is_flagged(self):
+        # Before, batch_write never reached the lint (matcher) and its own tool_input has no
+        # top-level topics/mentions, so a bulk import's mistyped slugs were invisible.
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        context = self.assert_advised(
+            self.run_lint(
+                batch_envelope(
+                    [
+                        op("publish_memory", slug="a", topics=["kb-discipline"]),
+                        op("publish_doc", slug="b", topics=["kb-disciplne"]),
+                    ]
+                )
+            )
+        )
+        self.assertIn('"kb-disciplne" -- did you mean "kb-discipline"?', context)
+        self.assertTrue(self.dump_state()["sessions"]["sess-1"]["flags"]["lint_near_miss"])
+
+    def test_mentions_and_every_covered_tool_are_read(self):
+        for tool in (
+            "publish_memory",
+            "publish_doc",
+            "publish_entry",
+            "append_entry",
+            "patch_doc",
+            "patch_memory",
+        ):
+            with self.subTest(tool=tool):
+                self.bump_epoch("sess-1")
+                self.seed_vocab(NEAR_MISS_VOCAB)
+                context = self.assert_advised(
+                    self.run_lint(batch_envelope([op(tool, slug="x", mentions=["kb-disciplne"])]))
+                )
+                self.assertIn('did you mean "kb-discipline"?', context)
+
+    def test_offenders_across_operations_become_one_advisory_without_duplicates(self):
+        self.seed_vocab(NEAR_MISS_VOCAB + [{"slug": "kb-search", "description": "d", "degree": 1}])
+        context = self.assert_advised(
+            self.run_lint(
+                batch_envelope(
+                    [
+                        op("publish_doc", slug="a", topics=["kb-disciplne"]),
+                        op("patch_doc", slug="b", topics=["kb-disciplne"], mentions=["kb-serch"]),
+                        op("append_entry", mentions=["kb-search"]),
+                    ]
+                )
+            )
+        )
+        self.assertEqual(context.count('"kb-disciplne" -- did you mean'), 1)
+        self.assertIn('"kb-serch" -- did you mean "kb-search"?', context)
+        # Once per epoch is shared with the standalone call: the same typo again stays quiet.
+        self.assert_silent(
+            self.run_lint(batch_envelope([op("publish_doc", slug="c", topics=["kb-disciplne"])]))
+        )
+        self.assert_silent(
+            self.run_lint(
+                envelope(
+                    "mcp__plugin_gitian-kb_gitian__publish_doc",
+                    tool_input={"topics": ["kb-disciplne"]},
+                )
+            )
+        )
+
+    def test_exact_slugs_a_far_slug_and_an_empty_cache_stay_silent(self):
+        batch = batch_envelope(
+            [
+                op("publish_doc", slug="a", topics=["kb-discipline"]),
+                op("publish_memory", slug="b", topics=["completely-different-slug"]),
+            ]
+        )
+        self.assert_silent(self.run_lint(batch))
+        self.assertFalse(os.path.exists(self.state_file))
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        self.assert_silent(self.run_lint(batch))
+        self.assertNotIn("lint_near_miss", self.dump_state()["sessions"].get("sess-1", {}).get("flags", {}))
+
+    def test_operations_of_tools_the_lint_does_not_cover_contribute_nothing(self):
+        # publish_topic / publish_category / retractions are not linted standalone, so a slug-shaped
+        # field inside one must not be read as a topic reference either.
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        self.assert_silent(
+            self.run_lint(
+                batch_envelope(
+                    [
+                        op("publish_topic", slug="kb-disciplne", topics=["kb-disciplne"]),
+                        op("publish_category", slug="kb-disciplne", name="n", prompt="p"),
+                        op("retract_item", slug="x", topics=["kb-disciplne"]),
+                        op("nonsense", topics=["kb-disciplne"]),
+                        op("batch_write", topics=["kb-disciplne"]),
+                        op("mcp__gitian__publish_doc", topics=["kb-disciplne"]),
+                    ]
+                )
+            )
+        )
+        self.assertFalse(
+            self.dump_state()["sessions"].get("sess-1", {}).get("flags", {}).get("lint_near_miss")
+        )
+
+    def test_malformed_operations_are_silent_and_do_not_hide_a_real_typo(self):
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        for tool_input in (
+            {},
+            {"operations": None},
+            {"operations": "publish_doc"},
+            {"operations": {"tool": "publish_doc", "args": {"topics": ["kb-disciplne"]}}},
+            {"operations": [None, "x", 3, [], {}]},
+            {"operations": [{"tool": "publish_doc"}, {"tool": "publish_doc", "args": "x"}]},
+            {"operations": [{"tool": "publish_doc", "args": {"topics": "kb-disciplne"}}]},
+            {"operations": [{"tool": "publish_doc", "args": {"topics": [None, 3, ""]}}]},
+        ):
+            with self.subTest(tool_input=tool_input):
+                self.assert_silent(self.run_lint(envelope(BATCH_TOOL, tool_input=tool_input)))
+        self.assert_advised(
+            self.run_lint(
+                batch_envelope(
+                    [None, {"tool": "publish_doc"}, op("publish_doc", topics=["kb-disciplne"])]
+                )
+            )
+        )
+
+    def test_the_other_server_spelling_is_covered_and_other_servers_are_not(self):
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        operations = [op("publish_doc", slug="a", topics=["kb-disciplne"])]
+        self.assert_silent(self.run_lint(batch_envelope(operations, tool_name="mcp__other__batch_write")))
+        self.assert_advised(
+            self.run_lint(batch_envelope(operations, tool_name="mcp__gitian__batch_write"))
+        )
+
+    def test_publish_category_alone_is_never_linted(self):
+        # It carries no topic or mention lists, so there is nothing for the rule to read.
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        self.assert_silent(
+            self.run_lint(
+                envelope(
+                    "mcp__plugin_gitian-kb_gitian__publish_category",
+                    tool_input={"slug": "kb-disciplne", "name": "n", "prompt": "p"},
+                )
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -60,14 +60,19 @@ READ_SUFFIXES = (
 # patch_doc/patch_memory ARE writes to the KB -- they carry no body, but they revise an item and
 # are the scribe's normal revision path, so a session whose whole KB contribution was a patch must
 # not read as "nothing published" to the Stop reminder (whose own marker list mirrors this one).
+# batch_write is a write too: it carries up to 25 of the above in one call, so a scribe that
+# imported a corpus through it has published exactly as much as one that made 25 calls. Its
+# envelope has no top-level `slug`, which is why _publish_outcome reads a batch by its results.
 PUBLISH_MARKERS = (
     "publish_doc",
     "publish_memory",
     "publish_entry",
     "publish_topic",
+    "publish_category",
     "append_entry",
     "patch_doc",
     "patch_memory",
+    "batch_write",
 )
 APPEND_MARKERS = ("append_entry", "publish_entry")
 RETRACT_MARKERS = ("retract_item", "retract_topic")
@@ -258,6 +263,21 @@ def _is_failure_envelope(payload):
     return payload.get("isError") is True
 
 
+def _written_slug(payload):
+    """The slug a success envelope names, or None. Normally the top-level `slug`; a batched
+    `publish_topic` answers `{topics: [{slug, state, degree}, ...], landed_in}` instead -- no
+    top-level slug, but each entry names what was written, so the first one is the proof."""
+    slug = payload.get("slug")
+    if isinstance(slug, str) and slug:
+        return slug
+    topics = payload.get("topics")
+    if isinstance(topics, list):
+        for entry in topics:
+            if isinstance(entry, dict) and isinstance(entry.get("slug"), str) and entry["slug"]:
+                return entry["slug"]
+    return None
+
+
 def _is_success_envelope(payload):
     """POSITIVE evidence that a write landed. Every successful write answers with the item's
     `slug` (repository.ts::PublishSuccess, and publish_topic's own `{slug, state, degree, landed_in}`), and
@@ -265,13 +285,65 @@ def _is_success_envelope(payload):
     only WHEN PRESENT -- publish_topic mints a topic with no revision number at all -- while the
     slug is unconditional: with no slug there is nothing to say was written, and the whole point
     of reading success positively is that "no failure marker found" is not evidence of one."""
-    slug = payload.get("slug")
-    if not isinstance(slug, str) or not slug:
+    if _written_slug(payload) is None:
         return False
     rev = payload.get("rev")
     if rev is not None and (isinstance(rev, bool) or not isinstance(rev, (int, float))):
         return False
     return True
+
+
+def _is_batch_envelope(payload):
+    """`batch_write`'s answer: `{results: [...], succeeded: N, failed: M}` (mcp-server.ts). The two
+    counters are required alongside the list so an ordinary payload that merely has a `results` key
+    -- a `search` response, say -- is never read as one."""
+    return (
+        isinstance(payload.get("results"), list)
+        and _is_int(payload.get("succeeded"))
+        and _is_int(payload.get("failed"))
+    )
+
+
+def _is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _landed_batch_entries(payload):
+    """The batch's `results` entries that really changed the KB, in operation order: `ok: true`,
+    carrying an item slug (the same positive evidence a standalone write is judged on), and not
+    the `unchanged: true` no-op a write whose content already matched the head reports -- which,
+    standalone or batched, records nothing."""
+    return [
+        entry
+        for entry in payload["results"]
+        if isinstance(entry, dict)
+        and entry.get("ok") is True
+        and _is_success_envelope(entry)
+        and entry.get("unchanged") is not True
+    ]
+
+
+def _batch_landed_an_append(tool_name, tool_input, tool_response):
+    """True when `tool_name` is a batch_write and one of the operations that landed was a journal
+    write (`append_entry`/`publish_entry`). The commit-nudge damper keys on `lastAppendAt`, and a
+    journal entry written through a batch is exactly the entry it is asking about. The response
+    does not name each result's tool, so the operation is read back off `tool_input` by `index`."""
+    if "batch_write" not in tool_name:
+        return False
+    operations = tool_input.get("operations")
+    if not isinstance(operations, list):
+        return False
+    for payload in _envelope_candidates(tool_response):
+        if not _is_batch_envelope(payload):
+            continue
+        for entry in _landed_batch_entries(payload):
+            index = entry.get("index")
+            if not _is_int(index) or not 0 <= index < len(operations):
+                continue
+            operation = operations[index]
+            if isinstance(operation, dict) and operation.get("tool") in APPEND_MARKERS:
+                return True
+    return False
 
 
 def _publish_outcome(tool_response):
@@ -289,7 +361,15 @@ def _publish_outcome(tool_response):
     for payload in _envelope_candidates(tool_response):
         if _is_failure_envelope(payload):
             return None
-        if success is None and _is_success_envelope(payload):
+        if success is not None:
+            continue
+        if _is_batch_envelope(payload):
+            # A batch is a SUCCESS as a call even when some operations failed -- the failures are
+            # inside `results`, never on the envelope -- so it counts as a publish exactly when at
+            # least one operation landed a change, and names the last such operation's slug.
+            landed = _landed_batch_entries(payload)
+            success = landed[-1] if landed else None
+        elif _is_success_envelope(payload):
             success = payload
     if success is None:
         return None
@@ -326,26 +406,51 @@ def _nested_resource_payload(parsed):
         return None
 
 
-def _extract_topics(tool_response):
-    """Try json.loads on each content block's text field, then -- for the `read_resource` tool's
-    doubly-encoded envelope -- on the resource payload nested inside it; fall back to the whole
-    response; None on total failure (harvest nothing)."""
+def _vocab_payload(tool_response):
+    """The vocabulary document itself -- the dict carrying a `topics` list -- inside a vocab read's
+    response: try json.loads on each content block's text field, then, for the `read_resource`
+    tool's doubly-encoded envelope, on the resource payload nested inside it; fall back to the
+    whole response; None on total failure (harvest nothing). `topics` and `default_kb` are both
+    top-level members of this one document, so both are read off the same parse."""
     for text in _text_blocks(tool_response):
         try:
             parsed = json.loads(text)
         except Exception:
             continue
-        topics = _topics_from(parsed)
-        if topics is not None:
-            return topics
-        topics = _topics_from(_nested_resource_payload(parsed))
-        if topics is not None:
-            return topics
+        if _topics_from(parsed) is not None:
+            return parsed
+        nested = _nested_resource_payload(parsed)
+        if _topics_from(nested) is not None:
+            return nested
     try:
         parsed = tool_response if isinstance(tool_response, dict) else json.loads(tool_response)
     except Exception:
         return None
-    return _topics_from(parsed)
+    return parsed if _topics_from(parsed) is not None else None
+
+
+def _extract_topics(tool_response):
+    """The vocabulary's `topics` list, or None when the response carries no vocabulary."""
+    return _topics_from(_vocab_payload(tool_response))
+
+
+def _normalize_default_kb(raw):
+    """`default_kb` as the vocabulary advertises it -- `{kb, source, unavailable?}` where `source`
+    is "connection" (a human chose this KB for the connection) or "home" -- reduced to exactly
+    those fields, or None for anything else (an older server that advertises none, or a shape this
+    hook does not know). None is cached as ABSENCE: a server rolled back to one with no `default_kb`
+    must stop earning whatever the cached value used to allow (routing_guard.py reads it)."""
+    if not isinstance(raw, dict):
+        return None
+    kb = raw.get("kb")
+    source = raw.get("source")
+    if not isinstance(kb, str) or not kb or source not in ("connection", "home"):
+        return None
+    normalized = {"kb": kb, "source": source}
+    unavailable = raw.get("unavailable")
+    if isinstance(unavailable, str) and unavailable:
+        normalized["unavailable"] = unavailable
+    return normalized
 
 
 def _normalize_topics(raw_topics):
@@ -396,8 +501,12 @@ def harvest(raw_text, payload):
         server_updates["pluginLatest"] = plugin_latest
 
     if is_vocab_read:
-        topics = _extract_topics(tool_response)
+        vocab = _vocab_payload(tool_response)
+        topics = _topics_from(vocab)
         if topics is not None:
+            # Cached beside the topics, from the same read, and overwritten (never merged) each
+            # time: the most recent observation is the truth.
+            server_updates["defaultKb"] = _normalize_default_kb(vocab.get("default_kb"))
             normalized = _normalize_topics(topics)
             server_updates["topics"] = normalized
             server_updates["vocabFetchedAt"] = state_mod.now_iso()
@@ -417,8 +526,10 @@ def harvest(raw_text, payload):
             # the response: a refusal carries the item's slug too (revConflictError /
             # baseRevRequiredError both name it), so "the first slug anywhere in the response"
             # would happily record a write that never happened.
-            server_updates["lastPublishSlug"] = success["slug"]
-            if _is_append_call(tool_name):
+            server_updates["lastPublishSlug"] = _written_slug(success)
+            if _is_append_call(tool_name) or _batch_landed_an_append(
+                tool_name, tool_input, tool_response
+            ):
                 server_updates["lastAppendAt"] = state_mod.now_iso()
 
     if not server_updates and not incr_reads and not incr_publishes:
@@ -476,9 +587,12 @@ def apply_effect(effect):
             # pluginLatest is overwritten, never max()ed: the most recent observation is the
             # truth (a rolled-back server advertising an older version must stop the nudge).
             for field in ("topics", "vocabFetchedAt", "undescribedTopics", "lastPublishAt",
-                          "lastPublishSlug", "lastAppendAt", "pluginLatest"):
+                          "lastPublishSlug", "lastAppendAt", "pluginLatest", "defaultKb"):
                 if field in server_updates:
-                    server[field] = server_updates[field]
+                    if server_updates[field] is None:
+                        server.pop(field, None)  # an observed ABSENCE clears the cache
+                    else:
+                        server[field] = server_updates[field]
 
         if effect["session_vocab_rev"] is not None or effect["incr_reads"] or effect["incr_publishes"]:
             session = _touch_session(state, effect["session_id"])
@@ -612,12 +726,19 @@ def _mint_message(slugs):
     plural = len(slugs) != 1
     # Addressed to whoever just published -- normally kb-scribe, in whose context this fires
     # (PostToolUse runs where the tool call was made), which is also the agent that can describe
-    # a topic it just minted without another round trip to the primary.
+    # a topic it just minted without another round trip to the primary. ONE call for all of them:
+    # a support KB that mints nine integrations from a single case used to be asked for nine
+    # publish_topic calls; the batch form is `topics: [{slug, description}, ...]`.
     return (
-        "%s %s %s auto-minted without descriptions -- worth a publish_topic for each, in this "
-        "same pass, with a real one-line description so the vocabulary stays legible; advisory, "
-        "once per topic per session."
-        % ("topics" if plural else "topic", ", ".join(slugs), "were" if plural else "was")
+        "%s %s %s auto-minted without descriptions -- describe %s in this same pass with ONE "
+        "publish_topic call, topics: [{slug, description}, ...], a real one-line description each "
+        "so the vocabulary stays legible; advisory, once per topic per session."
+        % (
+            "topics" if plural else "topic",
+            ", ".join(slugs),
+            "were" if plural else "was",
+            "them all" if plural else "it",
+        )
     )
 
 

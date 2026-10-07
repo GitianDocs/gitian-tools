@@ -882,5 +882,323 @@ class PublishOutcome(HarvestTestCase):
         self.assertEqual(server["lastPublishSlug"], "journal-2026-09-17")
 
 
+def bare_list(payload):
+    """The shape Claude Code actually hands a PostToolUse hook for an MCP call: a BARE LIST of
+    content blocks, the server's JSON as an escaped string in `text` (captured from a live payload;
+    see harvest.py::_text_blocks). New tests that feed a tool response use this one."""
+    return [{"type": "text", "text": json.dumps(payload)}]
+
+
+class DefaultKbCache(HarvestTestCase):
+    """`servers.<key>.defaultKb` is what routing_guard.py reads to know a human chose where a
+    kb-less write lands. It is cached from the vocabulary document's `default_kb` -- by BOTH
+    spellings of the vocab read -- and overwritten, never merged, on every later read."""
+
+    VOCAB_URI = "gitian-kb://vocab"
+
+    def vocab_doc(self, default_kb=None, **extra):
+        doc = {"kb": "home", "topics": [{"slug": "auth", "description": "Auth", "degree": 1}]}
+        if default_kb is not None:
+            doc["default_kb"] = default_kb
+        doc.update(extra)
+        return doc
+
+    def read_vocab_via_resource_tool(self, doc, session_id="sess-1"):
+        # What a primary session does: ReadMcpResourceTool answers `contents[].text` = the document.
+        return self.run_harvest(
+            envelope(
+                "ReadMcpResourceTool",
+                tool_input={"uri": self.VOCAB_URI},
+                tool_response={"contents": [{"uri": self.VOCAB_URI, "text": json.dumps(doc)}]},
+                session_id=session_id,
+            )
+        )
+
+    def read_vocab_via_read_resource(self, doc, session_id="sess-1"):
+        # What a subagent must do: the document is JSON-encoded twice, inside the bare-list block.
+        resource = {"uri": self.VOCAB_URI, "mimeType": "application/json", "text": json.dumps(doc)}
+        return self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__read_resource",
+                tool_input={"uri": self.VOCAB_URI},
+                tool_response=bare_list(resource),
+                session_id=session_id,
+            )
+        )
+
+    def cached(self):
+        return self.dump_state()["servers"][SERVER_KEY].get("defaultKb")
+
+    def test_a_connection_chosen_default_is_cached_from_read_resource(self):
+        proc = self.read_vocab_via_read_resource(
+            self.vocab_doc({"kb": "support", "source": "connection"})
+        )
+        self.assert_silent(proc)
+        self.assertEqual(self.cached(), {"kb": "support", "source": "connection"})
+
+    def test_it_is_cached_from_ReadMcpResourceTool_too(self):
+        self.read_vocab_via_resource_tool(self.vocab_doc({"kb": "support", "source": "connection"}))
+        self.assertEqual(self.cached(), {"kb": "support", "source": "connection"})
+
+    def test_the_home_default_and_an_unavailable_name_are_kept_verbatim(self):
+        self.read_vocab_via_read_resource(self.vocab_doc({"kb": "home", "source": "home"}))
+        self.assertEqual(self.cached(), {"kb": "home", "source": "home"})
+        self.read_vocab_via_read_resource(
+            self.vocab_doc({"kb": "home", "source": "connection", "unavailable": "Support"})
+        )
+        self.assertEqual(
+            self.cached(), {"kb": "home", "source": "connection", "unavailable": "Support"}
+        )
+
+    def test_regression_a_later_vocab_read_with_no_default_kb_clears_the_cache(self):
+        # A server rolled back to a build that does not advertise `default_kb` must stop earning
+        # the routing guard's allowance: the cache is the latest observation, not a high-water mark.
+        self.read_vocab_via_read_resource(self.vocab_doc({"kb": "support", "source": "connection"}))
+        self.assertIsNotNone(self.cached())
+        self.read_vocab_via_read_resource(self.vocab_doc())
+        self.assertIsNone(self.cached())
+
+    def test_a_later_read_overwrites_rather_than_merges(self):
+        self.read_vocab_via_read_resource(
+            self.vocab_doc({"kb": "home", "source": "connection", "unavailable": "Support"})
+        )
+        self.read_vocab_via_read_resource(self.vocab_doc({"kb": "support", "source": "connection"}))
+        self.assertEqual(self.cached(), {"kb": "support", "source": "connection"})
+
+    def test_malformed_default_kb_values_cache_nothing(self):
+        for bad in (
+            "support",
+            ["support"],
+            {"kb": "", "source": "connection"},
+            {"kb": "support"},
+            {"kb": "support", "source": "somewhere"},
+            {"kb": 3, "source": "connection"},
+        ):
+            self.read_vocab_via_read_resource(self.vocab_doc(bad))
+            self.assertIsNone(self.cached(), msg=repr(bad))
+
+    def test_only_a_vocab_read_touches_it(self):
+        self.read_vocab_via_read_resource(self.vocab_doc({"kb": "support", "source": "connection"}))
+        # A write or an ordinary read that happens to carry a `default_kb`-shaped field must not
+        # move the cache, and a non-vocab resource read must not clear it.
+        self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__get",
+                tool_input={"slug": "x"},
+                tool_response=bare_list({"slug": "x", "vocab_rev": 3}),
+            )
+        )
+        self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__read_resource",
+                tool_input={"uri": "gitian-kb://format/doc"},
+                tool_response=bare_list(
+                    {"uri": "gitian-kb://format/doc", "mimeType": "text/markdown", "text": "# Doc"}
+                ),
+            )
+        )
+        self.assertEqual(self.cached(), {"kb": "support", "source": "connection"})
+
+
+class BatchAndCategoryWrites(HarvestTestCase):
+    """The two answers that carry no (or a different) top-level item slug must still count as the
+    write they are, or the Stop reminder tells a session that described nine topics that it
+    published nothing."""
+
+    def test_a_batched_publish_topic_counts_as_one_publish(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_topic",
+                tool_input={"topics": [{"slug": "zendesk", "description": "d"}]},
+                tool_response=bare_list(
+                    {
+                        "topics": [
+                            {"slug": "zendesk", "state": "organic", "degree": 0},
+                            {"slug": "hubspot", "state": "organic", "degree": 2},
+                        ],
+                        "landed_in": "home",
+                        "vocab_rev": 9,
+                    }
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"]["publishes"], 1)
+        self.assertEqual(state["servers"][SERVER_KEY]["lastPublishSlug"], "zendesk")
+        self.assertEqual(state["servers"][SERVER_KEY]["vocabRev"], 9)
+        # publish_topic ends in the "topic" read suffix; it must not also read as an orientation.
+        self.assertEqual(state["sessions"]["sess-1"].get("gitianReads", 0), 0)
+
+    def test_a_batch_error_envelope_does_not_count(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_topic",
+                tool_input={"topics": []},
+                tool_response=bare_list(
+                    {"error": "validation_failed", "message": "publish_topic rejected"}
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state.get("sessions", {}).get("sess-1", {}).get("publishes", 0), 0)
+
+    def test_a_published_category_counts_as_a_write(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__gitian__publish_category",
+                tool_input={"slug": "billing", "name": "Billing", "prompt": "p"},
+                tool_response=bare_list(
+                    {"slug": "billing", "name": "Billing", "created": True, "landed_in": "home"}
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"]["publishes"], 1)
+        self.assertEqual(state["servers"][SERVER_KEY]["lastPublishSlug"], "billing")
+
+    def test_a_forbidden_category_write_does_not_count(self):
+        proc = self.run_harvest(
+            envelope(
+                "mcp__gitian__publish_category",
+                tool_input={"slug": "billing", "name": "Billing", "prompt": "p", "kb": "acme/team"},
+                tool_response=bare_list(
+                    {"error": "forbidden", "message": "only an org admin can change categories"}
+                ),
+            )
+        )
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state.get("sessions", {}).get("sess-1", {}).get("publishes", 0), 0)
+
+
+class BatchWrite(HarvestTestCase):
+    """`batch_write` answers `{results, succeeded, failed}` with no top-level `slug`, so reading it
+    like a standalone write recorded NOTHING: a scribe that imported a corpus in one batch was told
+    by the Stop reminder that the session had published nothing."""
+
+    TOOL = "mcp__plugin_gitian-kb_gitian__batch_write"
+
+    @staticmethod
+    def result(index, slug="a-memory", **extra):
+        return {"index": index, "ok": True, "slug": slug, "rev": 1, "landed_in": "home", **extra}
+
+    @staticmethod
+    def refusal(index, code="not_found"):
+        return {"index": index, "ok": False, "error": {"error": code, "message": "x"}}
+
+    def batch(self, results, operations=None, **extra):
+        succeeded = sum(1 for r in results if r["ok"])
+        response = {
+            "results": results,
+            "succeeded": succeeded,
+            "failed": len(results) - succeeded,
+            "vocab_rev": 31,
+            **extra,
+        }
+        return self.run_harvest(
+            envelope(
+                self.TOOL,
+                tool_input={"operations": operations or []},
+                tool_response=bare_list(response),
+            )
+        )
+
+    def test_a_batch_that_landed_writes_counts_as_a_publish_and_names_the_last_slug(self):
+        proc = self.batch([self.result(0, "first"), self.result(1, "second")])
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"]["publishes"], 1)
+        self.assertEqual(state["sessions"]["sess-1"].get("gitianReads", 0), 0)
+        server = state["servers"][SERVER_KEY]
+        self.assertTrue(server["lastPublishAt"])
+        self.assertEqual(server["lastPublishSlug"], "second")
+        self.assertEqual(server["vocabRev"], 31)
+
+    def test_a_partly_failed_batch_still_counts_because_some_writes_landed(self):
+        proc = self.batch([self.refusal(0), self.result(1, "survivor"), self.refusal(2, "rev_conflict")])
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"]["publishes"], 1)
+        self.assertEqual(state["servers"][SERVER_KEY]["lastPublishSlug"], "survivor")
+
+    def test_a_batch_where_every_operation_failed_publishes_nothing(self):
+        proc = self.batch([self.refusal(0), self.refusal(1)])
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"].get("publishes", 0), 0)
+        self.assertNotIn("lastPublishAt", state["servers"][SERVER_KEY])
+
+    def test_a_batch_of_no_ops_publishes_nothing_like_a_standalone_no_op(self):
+        proc = self.batch([self.result(0, unchanged=True), self.result(1, unchanged=True)])
+        self.assert_silent(proc)
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"].get("publishes", 0), 0)
+        self.assertNotIn("lastPublishAt", state["servers"][SERVER_KEY])
+
+    def test_a_refused_batch_publishes_nothing(self):
+        proc = self.run_harvest(
+            envelope(
+                self.TOOL,
+                tool_input={"operations": []},
+                tool_response=bare_list({"error": "batch_too_large", "message": "x"}),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_a_results_key_on_some_other_response_is_not_read_as_a_batch(self):
+        # `succeeded`/`failed` are required beside `results`, so a response that merely has a
+        # `results` list is not mistaken for a batch.
+        proc = self.run_harvest(
+            envelope(
+                self.TOOL,
+                tool_response=bare_list({"results": [self.result(0)], "vocab_rev": 9}),
+            )
+        )
+        self.assert_silent(proc)
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"].get("publishes", 0), 0)
+
+    def test_a_journal_write_inside_a_batch_sets_last_append_at(self):
+        operations = [
+            {"tool": "publish_memory", "args": {"slug": "m"}},
+            {"tool": "append_entry", "args": {"section": "s"}},
+        ]
+        proc = self.batch([self.result(0, "m"), self.result(1, "work-2026-10-06")], operations)
+        self.assert_silent(proc)
+        self.assertTrue(self.dump_state()["servers"][SERVER_KEY]["lastAppendAt"])
+
+    def test_a_batch_without_a_landed_journal_write_does_not_set_last_append_at(self):
+        operations = [
+            {"tool": "publish_memory", "args": {"slug": "m"}},
+            {"tool": "append_entry", "args": {"section": "s"}},
+        ]
+        # The append (index 1) FAILED: the damper must not read a journal write that never landed.
+        proc = self.batch([self.result(0, "m"), self.refusal(1)], operations)
+        self.assert_silent(proc)
+        self.assertNotIn("lastAppendAt", self.dump_state()["servers"][SERVER_KEY])
+
+    def test_batch_is_not_an_orientation_read(self):
+        proc = self.batch([self.result(0)])
+        self.assert_silent(proc)
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"].get("gitianReads", 0), 0)
+
+    def test_a_topic_minted_by_an_operation_still_prompts_the_description_follow_up(self):
+        minted = {
+            "code": "organic_topics_minted",
+            "path": "topics",
+            "note": "auto-minted as organic, live immediately: rostering, clever",
+        }
+        proc = self.batch([self.result(0, warnings=[minted])])
+        self.assertEqual(proc.returncode, 0, msg="stderr=%r" % proc.stderr)
+        context = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("rostering", context)
+        self.assertIn("clever", context)
+        undescribed = self.dump_state()["servers"][SERVER_KEY]["undescribedTopics"]
+        self.assertEqual(sorted(undescribed), ["clever", "rostering"])
+
+
 if __name__ == "__main__":
     unittest.main()

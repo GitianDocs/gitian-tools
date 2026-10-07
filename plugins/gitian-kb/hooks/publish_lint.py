@@ -3,9 +3,11 @@
 
 Invoked as a single python3 process (stdin passed straight through, unread by publish-lint.sh) by
 publish-lint.sh, itself registered as a PreToolUse hook matching
-"mcp__.*(publish_doc|publish_memory|publish_entry|append_entry|patch_doc|patch_memory)" -- the
-patch tools included, since a patch revises an item's frontmatter and its topic/mention lists are
-exactly what this lint is about.
+"mcp__.*(publish_doc|publish_memory|publish_entry|append_entry|patch_doc|patch_memory|batch_write)"
+-- the patch tools included, since a patch revises an item's frontmatter and its topic/mention lists
+are exactly what this lint is about, and batch_write, which carries up to 25 of those six writes
+in `operations[{tool, args}]` and so is where a bulk import's typos would otherwise go unseen.
+`publish_category` and `publish_topic` are not linted: they carry no topic/mention lists.
 
 It NEVER BLOCKS. The advice travels as PreToolUse `hookSpecificOutput.additionalContext` with no
 `permissionDecision` at all, so the call proceeds through the normal permission flow untouched and
@@ -55,6 +57,19 @@ CONTEXT_PREFIX = "gitian-kb publish lint (advisory -- the call was not blocked):
 
 NEAR_MISS_FLAG = "lint_near_miss"
 NEAR_MISS_MAX_DISTANCE = 2
+
+# The tools whose `topics`/`mentions` this lint reads when they ride inside a batch_write -- the
+# exact set the matcher above covers, by bare name (an operation names its tool without the
+# `mcp__..._gitian__` namespace). Any other tool name in an operation contributes nothing.
+LINTED_BATCH_TOOLS = (
+    "publish_doc",
+    "publish_memory",
+    "publish_entry",
+    "append_entry",
+    "patch_doc",
+    "patch_memory",
+)
+BATCH_WRITE_MARKER = "batch_write"
 
 
 def _server_key():
@@ -109,6 +124,26 @@ def _as_slug_list(value):
     if not isinstance(value, list):
         return []
     return [v for v in value if isinstance(v, str) and v]
+
+
+def _mentioned_slugs(tool_name, tool_input):
+    """Every topic/mention slug the call carries: the call's own for a standalone write, or each
+    covered operation's `args` for a batch_write, in operation order. A malformed batch (no list,
+    an operation that is not a `{tool, args}` mapping, an unlisted tool) contributes only what its
+    well-formed covered operations carry."""
+    if BATCH_WRITE_MARKER not in tool_name:
+        return _as_slug_list(tool_input.get("topics")) + _as_slug_list(tool_input.get("mentions"))
+    operations = tool_input.get("operations")
+    if not isinstance(operations, list):
+        return []
+    slugs = []
+    for operation in operations:
+        if not isinstance(operation, dict) or operation.get("tool") not in LINTED_BATCH_TOOLS:
+            continue
+        args = operation.get("args")
+        if isinstance(args, dict):
+            slugs += _as_slug_list(args.get("topics")) + _as_slug_list(args.get("mentions"))
+    return slugs
 
 
 def _cached_topics(state, server_key):
@@ -190,7 +225,7 @@ def lint(payload):
             return None
 
         cached_topics = _cached_topics(state, _server_key())
-        mentioned = _as_slug_list(tool_input.get("topics")) + _as_slug_list(tool_input.get("mentions"))
+        mentioned = _mentioned_slugs(tool_name, tool_input)
         return _check_near_miss(mentioned, cached_topics)
 
     return decide

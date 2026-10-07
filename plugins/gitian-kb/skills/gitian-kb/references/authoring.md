@@ -97,8 +97,9 @@ The primary owns this decision; it is reproduced here for the inline path.
 | Mechanical doc revisions (flips, merges) | `kb-scribe` via `patch_doc` / `patch_memory` | Server-side merge — the body never re-crosses the wire, so the saving is real and the doc can't be truncated |
 | Mid-body edits (ticking a task, correcting a line) | `kb-scribe` via `body_edits` | The server applies the delta; no model retypes a body |
 | Journal appends | `kb-scribe` via `append_entry` | Highest frequency; clobber-proof; all clients |
+| Many independent writes at once (an import, one revision across many items) | `kb-scribe` via `batch_write` | One round trip, same per-operation rules; not atomic, so failures are read per index |
 | Orientation sweep, vocab refresh | `kb-librarian` | Read-heavy, mechanical, context-fat — and read-only by construction |
-| Merging a duplicate into a survivor the primary named | `kb-scribe`'s dedupe run | Mechanical once the survivor is chosen: verbatim `body_append`, union-merged lists, mutual `related`, `retract_item` of the duplicate |
+| Merging a duplicate into a survivor the primary named | `kb-scribe`'s dedupe run | Mechanical once the survivor is chosen: verbatim `body_append`, union-merged lists, mutual `related`, then `retract_item` of the duplicate with `redirect_to` the survivor (no referrer repoints) |
 | Which duplicate survives | Primary, always | Judgment about which body and manifest the KB carries forward |
 | A single one-off `search`/`get` | Inline | Spawning a subagent costs more than the call it would save |
 
@@ -235,11 +236,28 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   name. Explicit `null` is only for work that's genuinely not project- or repo-bound — never a
   shortcut. Always include `summary`, especially on memories, where it's the only preview a list
   view shows.
+- **Give a memory a `title`, and put measurable facts in `fields`.** A memory's slug is its
+  identity, but every list and search result shows its *title* — and `case-0412` names nothing a
+  reader would type. Set `title` (1-200 chars, optional; omitted, the slug is the title) whenever
+  the slug alone would not say what the memory is; `patch_memory` with `title: null` removes one.
+  For a fact you will later FILTER or COUNT by — a case's risk, efficacy, hours to resolve,
+  satisfaction, a source permalink — use `fields` on a memory or doc (not an entry): a flat map of
+  up to 24 snake_case keys (`^[a-z][a-z0-9_]{0,39}$`) to a string (<=200 chars), a finite number or
+  a boolean. Never null, never nested; a value you do not have is simply absent. `tags` stay the
+  place for open-ended labels (never `risk-high` — that is `fields: {risk: "high"}`), `type` for
+  the primitive's own classification. A patch's `fields` REPLACES the whole map (omit it to leave
+  the map alone; send `{}` to clear it), so re-send every key you want kept. Read them back with
+  `list`: `fields: {risk: "high", escalated: true}` keeps only items holding every pair (typed — the
+  string `"3"` never matches the number `3`), and `facet_fields: ["risk", "hours_to_resolve"]` (up
+  to 8 keys, implies `facets`) answers `facets.fields` — value counts for a text or boolean key,
+  `{count, min, max, avg}` for a numeric one — so a metric is one call rather than a body parse.
+  Pick key names once per KB and reuse them — keys are lowercase snake_case (`Risk` is rejected)
+  and `risk` and `risk_level` are two different keys that no filter will join.
 - **Every successful write answers `landed_in`** — the label of the KB the item is actually in
   (`home`, `<org>/team`, `login/kb-slug`). Read it on every write and report it; never assume the
   write landed in the KB you aimed at. When it isn't the KB you meant, say so — a landing is never
   fixed by republishing the same body into another KB.
-- `warnings` on a successful publish are advice to act on, not blockers. Twenty-five codes:
+- `warnings` on a successful publish are advice to act on, not blockers. Twenty-six codes:
   - `no_tags` — no tags supplied; add 1-3 to aid retrieval
   - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
   - `no_repo` — `repo` is null on a doc or entry; derive it from `git remote get-url origin` (the
@@ -253,7 +271,8 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   - `plan_without_files` — an active plan with a `repo` but empty `files`; declare the paths the plan will touch (trailing `/` = subtree) so parallel agents can detect contention
   - `organic_topics_minted` — a `topics`/`mentions` slug wasn't a live topic yet; it auto-minted as an undescribed stub and is already live in relatedness — informational, not a problem to fix, but worth a glance: confirm it names a genuine new concept rather than a typo of an existing slug
   - `tombstoned_topics` — a `topics`/`mentions` slug names a topic a human tombstoned (vetoed); the link is stored but excluded from relatedness until it's deliberately re-minted via `publish_topic`
-  - `unknown_category` — `category` isn't a live category slug; stored but inert until it's minted (`/kb` UI) or fixed
+  - `unminted_mentions` — this KB's admin has switched **Mentions mint topics** off, and a `mentions` slug on this write has no live topic behind it, so it was neither minted nor linked (it stays in the stored frontmatter). Nothing is broken: `publish_topic` the slug if it names a real concept and re-publish to link it, put it under `topics` if the item is genuinely about it (`topics` always mint), or leave it. `topics` slugs are never withheld
+  - `unknown_category` — `category` isn't a live category slug; stored but inert until it's minted (`publish_category`, or the `/kb` UI) or fixed
   - `links_update_failed` — the topic/item-link index itself failed to write (distinct from an unknown slug); re-publish (even unchanged) to repair
   - `intents_update_failed` — the file-intents index failed to write; re-publish (even unchanged) to repair
   - `code_refs_update_failed` — the server could not update its index of code references for this item; the write itself succeeded; re-publish (even unchanged) to repair
@@ -267,15 +286,18 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   - `no_topics` — `topics` is empty on a doc/memory publish (entries are exempt); link 1-3 existing topics (see `gitian-kb://vocab`) or mint a genuine new concept. A `type: handoff` doc and any item tagged `meta` are exempt (see **The `meta` tag** below)
   - `doc_without_topics` — a `publish_doc` landed with no `topics`/`mentions` at all and the owner isn't on server-side extraction; apply the topic extraction contract in `topics.md` and re-publish. Same two exemptions as `no_topics`
   - `project_name_topic` — a `topics`/`mentions` slug just repeats `project` or the repo basename; it adds near-zero relatedness signal (every item in the project/repo would carry it) — link a concept topic instead
-  - `undescribed_topics_minted` — the subset of this publish's `organic_topics_minted` slugs whose topic still has no description; call `publish_topic` on each now while the context is fresh
+  - `undescribed_topics_minted` — the subset of this publish's `organic_topics_minted` slugs whose topic still has no description; describe them now while the context is fresh, all in ONE `publish_topic` call (`topics: [{slug, description}, ...]`)
   - `body_shrank` — the body you sent is more than 10% shorter than the stored one. Treat this as a truncation alarm, not a formality: compare `body_hash` in the response against what you expected, and if you didn't mean to cut the body, re-read the head revision and republish it in full. Past 25% (and more than 2000 characters) the publish is **rejected** outright with a `body_shrank` error instead — acknowledge a deliberate rewrite with `body_replaced: true`, or avoid the whole problem by using `patch_doc`/`patch_memory`, which never send a whole body at all
 - A `retract_item` response carries `referrers` — every live item in that KB still linking to the
   retracted slug, each with its `source` — and, when there are any, a `dangling_referrers` warning
-  naming up to ten. The tombstone has landed either way; the links have not moved. Repoint each
-  referrer to whatever replaces the retracted item (or drop the link if nothing does): a `related`
-  referrer is a `patch_doc`/`patch_memory` of `related`, a `wikilink` referrer a `body_edits` patch
-  of the `[[slug]]` text. `get`'s `links.incoming` is the same list for an item you have not
-  retracted — check it before a retract you can avoid.
+  naming up to ten. The tombstone has landed either way; the links have not moved. When the item
+  was MERGED into another, retract it with `redirect_to` (the survivor's slug, same KB) and there is
+  nothing to repoint: the old slug resolves to the survivor, the response carries `redirected_to`
+  and the warning is suppressed. Otherwise repoint each referrer to whatever replaces the retracted
+  item (or drop the link if nothing does): a `related` referrer is a `patch_doc`/`patch_memory` of
+  `related`, a `wikilink` referrer a `body_edits` patch of the `[[slug]]` text. `get`'s
+  `links.incoming` is the same list for an item you have not retracted — check it before a retract
+  you can avoid. `get` of a redirected slug serves the survivor with `redirected_from`.
 - **The `meta` tag.** Tag an item `meta` when it is ABOUT the KB rather than about a subject in
   it — the KB's own design or layout, a manifest or index, a note on how the KB is organised.
   Topics are a vocabulary of subjects, so a meta item has none to link, and `no_topics` /
@@ -404,7 +426,11 @@ theirs). Merge one into the other, mechanically:
 4. Cross-link both ways: the duplicate's slug goes into the survivor's `related` (part of step 3's
    union), and the survivor's slug goes into the duplicate's `related` via its own `patch_doc`, so
    the tombstone still points at where the content went.
-5. `retract_item` the duplicate.
+5. `retract_item { slug: <duplicate>, redirect_to: <survivor>, base_rev }`. The redirect is the
+   repair for everything that referred to the duplicate: its slug now resolves to the survivor on
+   reads, so every `[[<duplicate>]]` wikilink and `related` entry keeps landing and **no referrer
+   is repointed**. The response carries `redirected_to: "<survivor>"` as the proof, and no
+   `dangling_referrers` warning.
 
 Every one of those writes carries `base_rev` from the read that immediately preceded it — the
 survivor's `patch_doc` and the duplicate's cross-link `patch_doc` from their step-1 `get`s, and
@@ -416,6 +442,29 @@ re-read/re-apply/retry rule above applies unchanged.
 body and which manifest the KB should carry forward — the primary's call, exactly like topic
 choice. Asked to *propose* candidates instead, that is a read-only job for `kb-librarian`: it
 reports pairs and stops.
+
+## Bulk writes: `batch_write`
+
+`batch_write { operations: [{ tool, args }] }` runs 1-25 item writes in one call (under 2 MB of
+arguments): `tool` is `publish_memory`, `patch_memory`, `publish_doc`, `patch_doc`, `publish_entry`
+or `append_entry`, and `args` is exactly what that tool takes alone. Use it for bulk work — an
+import, one revision applied across many items — and make a single call for a single write.
+
+Each operation goes through the same code as the standalone call, so nothing is relaxed: its own
+`kb` and `repo` (put them on every operation that needs one — a batch may span KBs), its own
+`base_rev`, its own warnings. Operations run in order, so a later one can build on an earlier one
+(`patch_doc` a doc the batch just published, at `base_rev: 1`).
+
+- **Not atomic.** A failing operation does not stop or undo the others. The response is
+  `{ results, succeeded, failed }`; `results[i]` is `{ index, ok: true, ...the call's fields }` or
+  `{ index, ok: false, error }` with the standalone call's own error payload — a `rev_conflict`
+  keeps its `head_rev` and diff. Read every entry; `succeeded > 0` does not mean the batch is done.
+- **Never resend the whole batch** to fix a failure: the operations that landed would run again, and
+  an `append_entry` appends twice. Retry only the failed indices.
+- **Out of scope:** `retract_item`, the topic writes and every read are `unsupported_tool` inside a
+  batch, as is a nested `batch_write`. A retraction stays its own call.
+- One `vocab_rev` rides on the envelope (read after the last operation, for the first successful
+  operation's KB); compare it per KB as usual.
 
 ## The nudge layer
 
@@ -447,17 +496,21 @@ The nine nudges:
    plan elsewhere may already claim. Silent inside a delegated session, whose remedy (dispatch the
    librarian) it could not follow.
 3. **Publish lint** (PreToolUse on `publish_doc`/`publish_memory`/`publish_entry`/`append_entry`/
-   `patch_doc`/`patch_memory`) — **never blocks**: it adds context beside the tool's result and
-   lets the call through untouched. One rule, the one the server cannot see: a topic or mention
+   `patch_doc`/`patch_memory`, and on `batch_write`, whose `operations[]` it reads one by one) —
+   **never blocks**: it adds context beside the tool's result and lets the call through untouched. One rule, the one the server cannot see: a topic or mention
    slug within two edits of a cached vocabulary slug ("did you mean"), which the server would
    otherwise mint as a near-duplicate topic. If it was a typo, correct the item with a follow-up
    revision (`patch_doc`/`patch_memory` replace the lists wholesale) and `retract_topic` the stray
    slug if the server reports it minted. Empty topics and a project/repo-name topic are left to the
    server's own `no_topics`/`project_name_topic` warnings in the same response.
-4. **Routing guard** (PreToolUse on `publish_doc`/`publish_entry`/`append_entry`) — stateless and
-   deterministic, not once-per-session: it denies a write passing **neither `kb` nor `repo`** (such
-   a write cannot route, so it lands in `home`) and names the `repo` to set; an explicit `kb` —
-   `"home"` for personal work — satisfies it too. Silent for memories, `patch_*`/`retract_*`, and
+4. **Routing guard** (PreToolUse on `publish_doc`/`publish_entry`/`append_entry`, and on
+   `batch_write` — each of its `operations[]` naming one of those three is judged on its own
+   `args`, and one deny names every offending operation's `index`; nothing in the batch runs) —
+   stateless and deterministic, not once-per-session: it denies a write passing **neither `kb` nor
+   `repo`** (such a write cannot route, so it lands in `home`) and names the `repo` to set; an explicit `kb` —
+   `"home"` for personal work — satisfies it too, and so does a connection whose default KB a human
+   chose (the cached `default_kb` of the last `gitian-kb://vocab` read says `source: "connection"`
+   and not `unavailable`): that write has somewhere deliberate to land. Silent for memories, `patch_*`/`retract_*`, and
    for any write already carrying one of the two fields.
 5. **Commit-nudge** (PostToolUse on `Bash`) — once per session, if a real commit (or `gh pr merge`)
    lands with no `append_entry`/journal activity in the last 2 hours, an advisory reminder to
@@ -468,8 +521,10 @@ The nine nudges:
    inside a delegated session, or whenever something was actually published.
 7. **Mint follow-up** (PostToolUse, riding the same harvest pass as vocab caching) — the first time
    a session sees a given auto-minted, undescribed topic slug in a response's
-   `organic_topics_minted` warning, one line naming it and pointing at an immediate `publish_topic`
-   call; silent on every later repeat of a slug already prompted this session.
+   `organic_topics_minted` warning, one line naming every new one and pointing at ONE immediate
+   batched `publish_topic` call (`topics: [{slug, description}, ...]`); silent on every later repeat
+   of a slug already prompted this session. It reads only the minted-slug warning, so a mention the
+   KB declined to mint (`unminted_mentions`) never appears in it.
 8. **Server warnings** — `no_topics`, `project_name_topic`, and `undescribed_topics_minted` (see
    **Publishing rules** above) are advisory, never rejections, and they are the only place those
    conditions are reported — the client-side lint (nudge 3) no longer repeats them.
