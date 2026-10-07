@@ -54,6 +54,7 @@ READ_SUFFIXES = (
     "neighbors",
     "topic",
     "history",
+    "changes",
     "file_intents",
 )
 # patch_doc/patch_memory ARE writes to the KB -- they carry no body, but they revise an item and

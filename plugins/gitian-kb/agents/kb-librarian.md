@@ -4,7 +4,7 @@ description: Use when a session needs to KNOW what the gitian Knowledge Base alr
 model: sonnet
 color: cyan
 permissionMode: auto
-tools: ToolSearch, Read, Grep, Glob, mcp__plugin_gitian-kb_gitian__search, mcp__plugin_gitian-kb_gitian__list, mcp__plugin_gitian-kb_gitian__get, mcp__plugin_gitian-kb_gitian__history, mcp__plugin_gitian-kb_gitian__neighbors, mcp__plugin_gitian-kb_gitian__file_intents, mcp__plugin_gitian-kb_gitian__topic, mcp__plugin_gitian-kb_gitian__read_resource, mcp__gitian__search, mcp__gitian__list, mcp__gitian__get, mcp__gitian__history, mcp__gitian__neighbors, mcp__gitian__file_intents, mcp__gitian__topic, mcp__gitian__read_resource
+tools: ToolSearch, Read, Grep, Glob, mcp__plugin_gitian-kb_gitian__search, mcp__plugin_gitian-kb_gitian__list, mcp__plugin_gitian-kb_gitian__get, mcp__plugin_gitian-kb_gitian__history, mcp__plugin_gitian-kb_gitian__changes, mcp__plugin_gitian-kb_gitian__neighbors, mcp__plugin_gitian-kb_gitian__file_intents, mcp__plugin_gitian-kb_gitian__topic, mcp__plugin_gitian-kb_gitian__read_resource, mcp__gitian__search, mcp__gitian__list, mcp__gitian__get, mcp__gitian__history, mcp__gitian__changes, mcp__gitian__neighbors, mcp__gitian__file_intents, mcp__gitian__topic, mcp__gitian__read_resource
 disallowedTools: mcp__plugin_gitian-kb_gitian__publish_doc, mcp__plugin_gitian-kb_gitian__publish_memory, mcp__plugin_gitian-kb_gitian__publish_entry, mcp__plugin_gitian-kb_gitian__publish_topic, mcp__plugin_gitian-kb_gitian__patch_doc, mcp__plugin_gitian-kb_gitian__patch_memory, mcp__plugin_gitian-kb_gitian__append_entry, mcp__plugin_gitian-kb_gitian__retract_item, mcp__plugin_gitian-kb_gitian__retract_topic, mcp__gitian__publish_doc, mcp__gitian__publish_memory, mcp__gitian__publish_entry, mcp__gitian__publish_topic, mcp__gitian__patch_doc, mcp__gitian__patch_memory, mcp__gitian__append_entry, mcp__gitian__retract_item, mcp__gitian__retract_topic
 ---
 
@@ -50,6 +50,16 @@ as a tool.
   rank first). A response whose `mode` is `"lexical"` had no semantic help, so before reporting
   that the KB holds nothing, retry once in the vocabulary a document would use, or `neighbors` the
   closest hit.
+- **What changed since.** "What moved since the last sync?" or "what did this session change?" —
+  ONE `changes` call with `since` (the last `created_at` the primary saw, or the session's start),
+  paged with `next_cursor` until it is `null`. Each row is one revision — `kb`, `slug`, `rev`,
+  `kind` (a `tombstone` is a retraction), `author_login`, `created_at`, `title` — oldest first.
+  Never walk `history` item by item to answer this: you would not know which items to ask about.
+- **Enumerate or count.** "List everything in X" or "how many Y are there?" — `list` pages with
+  `next_cursor` (pass it back as `cursor`, same filters, until it is `null`), and every page
+  carries `total` for the whole filtered set. For a count, one `list` with `facets: true` answers
+  it — `total` plus counts by primitive, type, status, category, top topics and tags — without
+  paging at all. Never approximate a count from per-topic `topic` calls or a capped page.
 - **Vocab-delta refresh.** A tool response's `vocab_rev` differs from the value the primary last
   saw. Re-read `gitian-kb://vocab`, diff it against what the primary told you it saw last, and
   report only what changed (new topics, promotions, tombstones, category edits) — not the whole

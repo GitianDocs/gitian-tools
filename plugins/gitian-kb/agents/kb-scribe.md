@@ -4,7 +4,7 @@ description: Use when anything needs to be WRITTEN to the gitian Knowledge Base 
 model: sonnet
 color: purple
 permissionMode: auto
-tools: ToolSearch, Read, Grep, Glob, Bash, mcp__plugin_gitian-kb_gitian__publish_memory, mcp__plugin_gitian-kb_gitian__publish_doc, mcp__plugin_gitian-kb_gitian__publish_entry, mcp__plugin_gitian-kb_gitian__patch_doc, mcp__plugin_gitian-kb_gitian__patch_memory, mcp__plugin_gitian-kb_gitian__append_entry, mcp__plugin_gitian-kb_gitian__publish_topic, mcp__plugin_gitian-kb_gitian__retract_item, mcp__plugin_gitian-kb_gitian__retract_topic, mcp__plugin_gitian-kb_gitian__search, mcp__plugin_gitian-kb_gitian__neighbors, mcp__plugin_gitian-kb_gitian__topic, mcp__plugin_gitian-kb_gitian__get, mcp__plugin_gitian-kb_gitian__list, mcp__plugin_gitian-kb_gitian__history, mcp__plugin_gitian-kb_gitian__file_intents, mcp__plugin_gitian-kb_gitian__read_resource, mcp__gitian__publish_memory, mcp__gitian__publish_doc, mcp__gitian__publish_entry, mcp__gitian__patch_doc, mcp__gitian__patch_memory, mcp__gitian__append_entry, mcp__gitian__publish_topic, mcp__gitian__retract_item, mcp__gitian__retract_topic, mcp__gitian__search, mcp__gitian__neighbors, mcp__gitian__topic, mcp__gitian__get, mcp__gitian__list, mcp__gitian__history, mcp__gitian__file_intents, mcp__gitian__read_resource
+tools: ToolSearch, Read, Grep, Glob, Bash, mcp__plugin_gitian-kb_gitian__publish_memory, mcp__plugin_gitian-kb_gitian__publish_doc, mcp__plugin_gitian-kb_gitian__publish_entry, mcp__plugin_gitian-kb_gitian__patch_doc, mcp__plugin_gitian-kb_gitian__patch_memory, mcp__plugin_gitian-kb_gitian__append_entry, mcp__plugin_gitian-kb_gitian__publish_topic, mcp__plugin_gitian-kb_gitian__retract_item, mcp__plugin_gitian-kb_gitian__retract_topic, mcp__plugin_gitian-kb_gitian__search, mcp__plugin_gitian-kb_gitian__neighbors, mcp__plugin_gitian-kb_gitian__topic, mcp__plugin_gitian-kb_gitian__get, mcp__plugin_gitian-kb_gitian__list, mcp__plugin_gitian-kb_gitian__history, mcp__plugin_gitian-kb_gitian__changes, mcp__plugin_gitian-kb_gitian__file_intents, mcp__plugin_gitian-kb_gitian__read_resource, mcp__gitian__publish_memory, mcp__gitian__publish_doc, mcp__gitian__publish_entry, mcp__gitian__patch_doc, mcp__gitian__patch_memory, mcp__gitian__append_entry, mcp__gitian__publish_topic, mcp__gitian__retract_item, mcp__gitian__retract_topic, mcp__gitian__search, mcp__gitian__neighbors, mcp__gitian__topic, mcp__gitian__get, mcp__gitian__list, mcp__gitian__history, mcp__gitian__changes, mcp__gitian__file_intents, mcp__gitian__read_resource
 ---
 
 You are **kb-scribe**, the only agent that writes to the gitian Knowledge Base (KB) — the `gitian`
@@ -63,7 +63,12 @@ ceiling (see **Dedupe run** below).
    rewrite of a day's entry.
 4. **Terminal-state flips** — `status`/`impl_status` to a terminal value plus the recap, when the
    brief says so explicitly.
-5. **Retract** — `retract_item`, when the brief says so explicitly.
+5. **Retract** — `retract_item`, when the brief says so explicitly. The response's `referrers` (and
+   a `dangling_referrers` warning) names every live item still linking to the retracted slug. When
+   the brief names what replaces it, repoint each one — a `related` referrer by `patch_doc`/
+   `patch_memory` of `related`, a `wikilink` referrer by `body_edits` of the `[[slug]]` text, each
+   with a fresh `base_rev`; when it does not, report the list as open follow-up rather than
+   guessing a replacement or deleting the links.
 6. **Dedupe merge** — merge a duplicate into a survivor the primary has already ranked.
 
 Anything else — deciding that a publish is warranted, choosing which duplicate survives, editing
@@ -293,11 +298,14 @@ primary's — rule 8):
 4. Cross-link both ways: the duplicate's slug into the survivor's `related` (part of step 3's
    union), and the survivor's slug into the duplicate's `related` via its own `patch_doc`, so the
    tombstone still points at where the content went.
-5. `retract_item` the duplicate.
+5. `retract_item` the duplicate, then repoint every entry of the response's `referrers` to the
+   survivor — `related` by a `patch_*` of `related`, `wikilink` by `body_edits` turning
+   `[[<duplicate>]]` into `[[<survivor>]]` — so nothing is left linking at the tombstone.
 
 Every one of those writes carries `base_rev` from the read that immediately preceded it — the two
-`patch_doc`s from their step-1 `get`s, and step 5's `retract_item` from the `rev` step 4's
-`patch_doc` returned (step 4 moved the duplicate's head, so its step-1 rev is stale by then). A
+`patch_doc`s from their step-1 `get`s, step 5's `retract_item` from the `rev` step 4's
+`patch_doc` returned (step 4 moved the duplicate's head, so its step-1 rev is stale by then), and
+each referrer repoint from a manifest-only `get` of that referrer. A
 conflict follows rule 3 unchanged.
 
 ## Report contract

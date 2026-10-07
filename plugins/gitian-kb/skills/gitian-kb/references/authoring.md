@@ -242,8 +242,11 @@ never move it). Quote those to confirm a write landed intact — never assert a 
 - `warnings` on a successful publish are advice to act on, not blockers. Twenty-five codes:
   - `no_tags` — no tags supplied; add 1-3 to aid retrieval
   - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
-  - `no_repo` — `repo` is null; derive it from `git remote get-url origin` (the session context
-    already surfaces this) or confirm the work isn't repo-bound
+  - `no_repo` — `repo` is null on a doc or entry; derive it from `git remote get-url origin` (the
+    session context already surfaces this) or confirm the work isn't repo-bound. Never on a
+    memory (memories never route), and never in a KB whose admin has switched **Repository-bound**
+    off on its settings page — a support KB or notebook that is not about any one repo, where a
+    null `repo` is the truth rather than an omission
   - `landed_without_commits` — `status: landed` but `commits` is empty; add the landing commit(s)/PR
   - `impl_done_status_open` — `impl_status: done` but `status` is still draft/designing/in-progress/blocked; reconcile before closing out
   - `terminal_with_next_steps` — `status` is terminal but `next_steps` is non-empty; confirm they still apply
@@ -261,11 +264,24 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   - `slug_exists_in_other_kb` — a create with no `kb` landed in `home` while that same slug already exists in another KB you can write — usually the org's `team` KB, i.e. the work you meant to revise is over there. Nothing is broken and nothing was overwritten, but you have probably just forked it: report the warning and let the primary decide between revising the existing item (with `kb` + `base_rev`) and keeping the new one
   - `kb_read_paywalled` — the doc or entry was ROUTED into an org `team` KB you can write but not read, because the org has no live subscription. The write landed and stays readable to you — you wrote it; a `get` on a *teammate's* item there answers `read_requires_entitlement` until the org subscribes. Nothing to fix — the response's `routed_to`/`landed_in` names where it went
   - `consider_update` — a rev-1 doc mint shares primary topics with an existing active doc; check whether you should be updating that doc instead — see `topics.md`
-  - `no_topics` — `topics` is empty on a doc/memory publish (entries are exempt); link 1-3 existing topics (see `gitian-kb://vocab`) or mint a genuine new concept
-  - `doc_without_topics` — a `publish_doc` landed with no `topics`/`mentions` at all and the owner isn't on server-side extraction; apply the topic extraction contract in `topics.md` and re-publish
+  - `no_topics` — `topics` is empty on a doc/memory publish (entries are exempt); link 1-3 existing topics (see `gitian-kb://vocab`) or mint a genuine new concept. A `type: handoff` doc and any item tagged `meta` are exempt (see **The `meta` tag** below)
+  - `doc_without_topics` — a `publish_doc` landed with no `topics`/`mentions` at all and the owner isn't on server-side extraction; apply the topic extraction contract in `topics.md` and re-publish. Same two exemptions as `no_topics`
   - `project_name_topic` — a `topics`/`mentions` slug just repeats `project` or the repo basename; it adds near-zero relatedness signal (every item in the project/repo would carry it) — link a concept topic instead
   - `undescribed_topics_minted` — the subset of this publish's `organic_topics_minted` slugs whose topic still has no description; call `publish_topic` on each now while the context is fresh
   - `body_shrank` — the body you sent is more than 10% shorter than the stored one. Treat this as a truncation alarm, not a formality: compare `body_hash` in the response against what you expected, and if you didn't mean to cut the body, re-read the head revision and republish it in full. Past 25% (and more than 2000 characters) the publish is **rejected** outright with a `body_shrank` error instead — acknowledge a deliberate rewrite with `body_replaced: true`, or avoid the whole problem by using `patch_doc`/`patch_memory`, which never send a whole body at all
+- A `retract_item` response carries `referrers` — every live item in that KB still linking to the
+  retracted slug, each with its `source` — and, when there are any, a `dangling_referrers` warning
+  naming up to ten. The tombstone has landed either way; the links have not moved. Repoint each
+  referrer to whatever replaces the retracted item (or drop the link if nothing does): a `related`
+  referrer is a `patch_doc`/`patch_memory` of `related`, a `wikilink` referrer a `body_edits` patch
+  of the `[[slug]]` text. `get`'s `links.incoming` is the same list for an item you have not
+  retracted — check it before a retract you can avoid.
+- **The `meta` tag.** Tag an item `meta` when it is ABOUT the KB rather than about a subject in
+  it — the KB's own design or layout, a manifest or index, a note on how the KB is organised.
+  Topics are a vocabulary of subjects, so a meta item has none to link, and `no_topics` /
+  `doc_without_topics` stay quiet for it. Never use `meta` to silence those warnings on an item
+  that does have a subject — link its topics instead. A `type: handoff` doc is exempt the same
+  way without the tag: it is a snapshot of a session, whatever the session was about.
 - **Report every `warnings` entry verbatim** — code, path and note as the server phrased it. Don't
   summarize a warning away, don't decide one doesn't matter, and don't silently "handle" one (e.g.
   re-publishing to retry a `links_update_failed`) unless you were told to.

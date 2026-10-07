@@ -252,6 +252,9 @@ class Reads(HarvestTestCase):
             "neighbors",
             "topic",
             "history",
+            # The change feed is a KB read like `history`: a librarian answering "what moved
+            # since" has oriented the session.
+            "changes",
             "file_intents",
         )
         for suffix in suffixes:
