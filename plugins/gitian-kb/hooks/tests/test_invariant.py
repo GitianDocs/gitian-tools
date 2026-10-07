@@ -17,9 +17,9 @@ Three scenarios (see the task's pinned spec -- this file IS the release gate):
      "empty stdout".
 
   B. EveryNudgeFiresOnceThenRearmsOnEpochBump
-     Every nudge-capable hook fires exactly once per (session, epoch): an identical re-send (or
-     a repeat of the same signal) passes silently, and only an epoch bump (simulating `clear`)
-     re-arms them.
+     Every nudge-capable hook fires exactly once per (session, epoch): a repeat of the same
+     signal passes silently, and only an epoch bump (simulating `clear`) re-arms them. No
+     PreToolUse nudge ever decides a permission -- each one only adds context.
 
   C. FailOpenSweep
      Every hook script under plugins/gitian-kb/hooks/*.sh -- swept by glob, not a hardcoded
@@ -245,13 +245,15 @@ class InvariantTestCase(unittest.TestCase):
             self.assertNotIn("permissionDecision", hso)
         return payload
 
-    def assert_deny(self, proc):
+    def assert_pre_tool_context(self, proc):
+        """Advice that does not decide anything: PreToolUse additionalContext with no
+        permissionDecision, so the call is neither blocked nor pre-approved."""
         self.assertEqual(proc.returncode, 0, msg="stderr=%r" % proc.stderr)
         payload = json.loads(proc.stdout)
         out = payload["hookSpecificOutput"]
         self.assertEqual(out["hookEventName"], "PreToolUse")
-        self.assertEqual(out["permissionDecision"], "deny")
-        return out["permissionDecisionReason"]
+        self.assertNotIn("permissionDecision", out)
+        return out["additionalContext"]
 
     def assert_post_tool_context(self, proc):
         self.assertEqual(proc.returncode, 0, msg="stderr=%r" % proc.stderr)
@@ -380,10 +382,8 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
         `gitian-kb://vocab` resource read has EVER seeded `servers.<key>.topics` (a first-ever
         session against a brand-new plugin install, before `kb-librarian` or anything else has
         ever populated the local vocab cache). Publishing with topics the empty cache doesn't
-        know about must still be completely silent: r1 (empty-topics) doesn't fire because
-        topics ARE supplied, r2 (near-miss) is explicitly gated off when the cache is empty (see
-        publish_lint.py's `_check_near_miss`), and r3 (project-name) doesn't fire for a genuine
-        concept slug."""
+        know about must still be completely silent: the lint's one rule (near-miss) is explicitly
+        gated off when the cache is empty (see publish_lint.py's `_check_near_miss`)."""
         sid = "sess-fresh-install"
 
         # 1. SessionStart(startup) -- context is allowed content, not a nudge.
@@ -465,50 +465,36 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
 
 
 class EveryNudgeFiresOnceThenRearmsOnEpochBump(InvariantTestCase):
-    """Scenario B -- every nudge-capable hook fires exactly once per (session, epoch); an
-    identical re-send / a repeat of the same signal passes silently; only an epoch bump
-    (simulating `clear`) re-arms them."""
+    """Scenario B -- every nudge-capable hook fires exactly once per (session, epoch); a repeat
+    of the same signal passes silently; only an epoch bump (simulating `clear`) re-arms them."""
 
     def test_each_nudge_fires_once_then_only_an_epoch_bump_rearms_it(self):
         sid = "sess-rearm"
 
-        # -- orientation: zero reads -> deny once, identical re-send passes ---------------------
+        # -- orientation: zero reads -> advice once, never a deny, repeat silent ----------------
         edit_payload = orientation_envelope(session_id=sid, cwd=self.tmpdir)
         first_orientation = self.run_hook(ORIENTATION_SH, edit_payload)
-        reason = self.assert_deny(first_orientation)
+        reason = self.assert_pre_tool_context(first_orientation)
         self.assertIn("file_intents", reason)
 
         second_orientation = self.run_hook(ORIENTATION_SH, edit_payload)
         self.assert_silent(second_orientation)
 
-        # -- publish lint r1 (empty topics): deny once with cached candidates, resend passes -----
+        # -- publish lint (near-miss): advice once, never a deny, repeat silent ------------------
         self.seed_vocab(
             [
                 {"slug": "auth", "description": "Authentication flows", "degree": 5},
                 {"slug": "kb-discipline", "description": "KB discipline", "degree": 4},
             ]
         )
-        empty_topics_payload = lint_envelope(
-            "mcp__plugin_gitian-kb_gitian__publish_doc",
-            tool_input={"title": "x", "topics": []},
-            session_id=sid,
-        )
-        first_lint = self.run_hook(PUBLISH_LINT_SH, empty_topics_payload)
-        lint_reason = self.assert_deny(first_lint)
-        self.assertIn("auth - Authentication flows", lint_reason)
-
-        second_lint = self.run_hook(PUBLISH_LINT_SH, empty_topics_payload)
-        self.assert_silent(second_lint)
-
-        # -- publish lint r2 (near-miss): a DIFFERENT call (new hash), still fires once ----------
         near_miss_payload = lint_envelope(
             "mcp__plugin_gitian-kb_gitian__publish_doc",
             tool_input={"title": "y", "topics": ["kb-disciplne"]},
             session_id=sid,
         )
         near_miss = self.run_hook(PUBLISH_LINT_SH, near_miss_payload)
-        near_miss_reason = self.assert_deny(near_miss)
-        self.assertIn('did you mean "kb-discipline"?', near_miss_reason)
+        near_miss_context = self.assert_pre_tool_context(near_miss)
+        self.assertIn('did you mean "kb-discipline"?', near_miss_context)
 
         second_near_miss = self.run_hook(PUBLISH_LINT_SH, near_miss_payload)
         self.assert_silent(second_near_miss)
@@ -559,7 +545,7 @@ class EveryNudgeFiresOnceThenRearmsOnEpochBump(InvariantTestCase):
         self.bump_epoch(sid)
 
         third_orientation = self.run_hook(ORIENTATION_SH, edit_payload)
-        self.assert_deny(third_orientation)
+        self.assert_pre_tool_context(third_orientation)
 
 
 class FailOpenSweep(InvariantTestCase):

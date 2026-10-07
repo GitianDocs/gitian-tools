@@ -5,38 +5,34 @@ Invoked as a single python3 process (stdin passed straight through, unread by pu
 publish-lint.sh, itself registered as a PreToolUse hook matching
 "mcp__.*(publish_doc|publish_memory|publish_entry|append_entry|patch_doc|patch_memory)" -- the
 patch tools included, since a patch revises an item's frontmatter and its topic/mention lists are
-exactly what this lint is about. Advisory only: it never blocks a call outright -- an identical
-re-send always passes untouched (pinned decision 5) -- it just nudges toward better vocabulary
-hygiene before a topic/mention list is committed to the KB.
+exactly what this lint is about.
+
+It NEVER BLOCKS. The advice travels as PreToolUse `hookSpecificOutput.additionalContext` with no
+`permissionDecision` at all, so the call proceeds through the normal permission flow untouched and
+the advice reaches the model next to the tool's result (Claude Code hooks reference, "Add context
+for Claude": PreToolUse's reminder appears "next to the tool result"; and "staying silent doesn't
+approve it" -- omitting the decision is not an `allow`, which this hook must never emit, since an
+`allow` would skip the user's own permission prompts). It used to answer `deny` once per rule per
+session and rely on the model re-sending the identical call; delegated writers read that as a
+refusal and stopped, so an "advisory" lint blocked real publishes.
 
 Guard: tool_name must contain "gitian" (matches the harvest.py convention); anything else is
 silent. The matcher above is only a coarse pre-filter -- this guard is the real gate.
 
-Retry short-circuit: every call is hashed (sha256 of tool_name + canonical JSON of tool_input).
-If that hash is already in sessions.<sid>.lintHashes, the call is treated as an identical retry
-of a previously-linted call and passes silently, untouched -- this is what lets the model "just
-re-send the identical call" after reading an advisory nudge.
+One rule, the one the server cannot see. Two earlier rules are gone because the server already
+returns them as warnings in the very tool response this advice now sits beside: empty topics
+(the server's `no_topics` / `doc_without_topics`, with `suggested_topics`) and a topic equal to the
+project or repo name (the server's `project_name_topic`). Repeating them here only doubled the
+noise.
+  near-miss (flag lint_near_miss) -- any slug in tool_input.topics + tool_input.mentions that is
+     NOT an exact cached slug but sits within Levenshtein distance 2 of one (checked only when the
+     cache is non-empty, so an unpopulated cache never produces false "did you mean"s). The server
+     cannot know this: it mints any novel slug, so a typo quietly becomes a near-duplicate topic in
+     the permanent vocabulary, reported back only as an ordinary `organic_topics_minted`.
 
-Rules (each evaluated independently; each fires at most once per (session, epoch) via its own
-flag -- epoch bumps clear flags, per the state contract, so a `clear` re-arms every rule):
-  r1 empty-topics (flag lint_empty_topics) -- tool is publish_doc, publish_memory, or
-     publish_entry (append_entry is EXEMPT, per pinned decision 5: entries are only linted on
-     create) and tool_input.topics is missing or empty. Reason lists up to 8 cached-vocab
-     candidates ranked by degree as "slug - description"; when the cache is empty, advises
-     reading gitian-kb://vocab and linking 1-3 topics instead.
-  r2 near-miss (flag lint_near_miss) -- any slug in tool_input.topics + tool_input.mentions that
-     is NOT an exact cached slug but sits within Levenshtein distance 2 of one (checked only when
-     the cache is non-empty, so an unpopulated cache never produces false "did you mean"s). Guards
-     a typo from quietly minting a near-duplicate into the permanent vocabulary.
-  r3 project-name (flag lint_project_topic) -- any slug in topics+mentions equal, case-insensitive,
-     to tool_input.project or to the basename of tool_input.repo. A project-name topic adds no
-     relatedness signal (every doc in the repo would carry it) -- suggests a concept topic instead.
-
-If no rule fires (or every rule whose condition matches already had its flag consumed this
-epoch), the hook is silent and the call hash is deliberately NOT stored -- there is nothing to
-remember a retry of. If at least one rule fires, every triggered flag plus the call hash are
-written in a single state merge, and one PreToolUse deny-once JSON is emitted whose reason starts
-with the fixed advisory preamble followed by one bullet per triggered rule.
+The rule fires at most once per (session, epoch) via its flag -- epoch bumps clear flags, per the
+state contract, so a `clear` re-arms it. If it does not fire, the hook is silent and state is
+untouched.
 
 Fail-open, silent-always: any exception anywhere is swallowed by the top-level guard below and
 the process always exits 0 (matches state.py's own fail-open contract). Bad stdin, a missing
@@ -46,7 +42,6 @@ Run directly: python3 publish_lint.py < envelope.json
 Tests: plugins/gitian-kb/hooks/tests/test_publish_lint.py (drives it via publish-lint.sh, end to end).
 """
 
-import hashlib
 import json
 import os
 import sys
@@ -56,13 +51,9 @@ import sys
 # without any path manipulation (see state.py's own docstring).
 import state as state_mod
 
-REASON_PREFIX = "gitian-kb publish lint (advisory - re-send the identical call to proceed unchanged):"
+CONTEXT_PREFIX = "gitian-kb publish lint (advisory -- the call was not blocked):"
 
-# r1 applies to these create-shaped calls only; append_entry is exempt (pinned decision 5).
-EMPTY_TOPICS_MARKERS = ("publish_doc", "publish_memory", "publish_entry")
-APPEND_MARKER = "append_entry"
-
-MAX_CANDIDATES = 8
+NEAR_MISS_FLAG = "lint_near_miss"
 NEAR_MISS_MAX_DISTANCE = 2
 
 
@@ -85,11 +76,6 @@ def _parse_stdin():
     except Exception:
         payload = {}
     return payload
-
-
-def _call_hash(tool_name, tool_input):
-    canonical = tool_name + json.dumps(tool_input, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _levenshtein(a, b):
@@ -125,22 +111,6 @@ def _as_slug_list(value):
     return [v for v in value if isinstance(v, str) and v]
 
 
-def _basename(path):
-    if not isinstance(path, str) or not path:
-        return ""
-    trimmed = path.rstrip("/")
-    if not trimmed:
-        return ""
-    return trimmed.rsplit("/", 1)[-1]
-
-
-def _degree(topic):
-    value = topic.get("degree")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0
-    return value
-
-
 def _cached_topics(state, server_key):
     server = state.get("servers", {}).get(server_key)
     topics = server.get("topics") if isinstance(server, dict) else None
@@ -149,30 +119,8 @@ def _cached_topics(state, server_key):
     return [t for t in topics if isinstance(t, dict) and isinstance(t.get("slug"), str)]
 
 
-def _check_empty_topics(tool_name, tool_input, cached_topics):
-    """r1 -- see module docstring."""
-    if not any(marker in tool_name for marker in EMPTY_TOPICS_MARKERS):
-        return None
-    if APPEND_MARKER in tool_name:
-        return None  # append_entry exempt from r1 regardless of any other marker match
-    provided = tool_input.get("topics")
-    if isinstance(provided, list) and len(provided) > 0:
-        return None
-
-    if not cached_topics:
-        return (
-            "no topics linked, and the cached vocabulary is empty -- read `gitian-kb://vocab` "
-            "(via the resource, or the `read_resource` tool when your client cannot read MCP "
-            "resources) and link 1-3 topics before publishing"
-        )
-
-    ranked = sorted(cached_topics, key=_degree, reverse=True)[:MAX_CANDIDATES]
-    candidates = ["%s - %s" % (t["slug"], t.get("description") or "") for t in ranked]
-    return "no topics linked -- top cached-vocab candidates by relatedness: " + "; ".join(candidates)
-
-
 def _check_near_miss(mentioned_slugs, cached_topics):
-    """r2 -- see module docstring."""
+    """See the module docstring. Returns the advice text, or None when nothing is a near miss."""
     if not cached_topics:
         return None
     cached_slugs = [t["slug"] for t in cached_topics]
@@ -195,37 +143,16 @@ def _check_near_miss(mentioned_slugs, cached_topics):
     if not offenders:
         return None
     parts = ['"%s" -- did you mean "%s"?' % (slug, match) for slug, match in offenders]
-    return "possible typo(s) against the cached vocabulary: " + "; ".join(parts)
-
-
-def _check_project_topic(tool_input, mentioned_slugs):
-    """r3 -- see module docstring."""
-    identity_names = set()
-    project = tool_input.get("project")
-    if isinstance(project, str) and project:
-        identity_names.add(project.lower())
-    repo_base = _basename(tool_input.get("repo"))
-    if repo_base:
-        identity_names.add(repo_base.lower())
-    if not identity_names:
-        return None
-
-    offenders = []
-    seen = set()
-    for slug in mentioned_slugs:
-        if slug in seen:
-            continue
-        if slug.lower() in identity_names:
-            seen.add(slug)
-            offenders.append(slug)
-
-    if not offenders:
-        return None
-    quoted = ", ".join('"%s"' % slug for slug in offenders)
+    # Factual, not imperative: the hooks reference warns that text framed as an out-of-band
+    # command can trip prompt-injection defenses. The call has already gone through, so the
+    # remedy is a follow-up revision, never a re-send.
     return (
-        "%s look%s like the project/repo name, not a concept -- a project-name topic adds no "
-        "relatedness signal (every doc in the repo would carry it); consider a concept topic instead"
-        % (quoted, "s" if len(offenders) == 1 else "")
+        "possible typo(s) against the cached vocabulary: "
+        + "; ".join(parts)
+        + ". If one was a typo, the item keeps it until a follow-up revision corrects its "
+        "topics/mentions (`patch_doc`/`patch_memory` replace those lists wholesale), and a slug "
+        "the server reports as `organic_topics_minted` stays in the vocabulary until "
+        "`retract_topic` removes it."
     )
 
 
@@ -240,100 +167,71 @@ def _touch_session(state, sid):
 
 
 def lint(payload):
-    """Guard + call-hash computation for the payload: returns (decide, call_hash), where `decide`
-    is a one-arg callable (decide(state)) that runs INSIDE the state lock against the freshly
-    loaded state and returns the list of (flag_name, text) pairs that trigger, or None when
-    nothing should fire (identical retry, or no rule matched) -- in which case the caller
-    (`_apply`) must not touch state at all. Returns (None, None) when the top-level guard itself
-    fails (not a gitian call, or no session id) -- there is no decision to make at all."""
+    """Guard for the payload: returns `decide`, a one-arg callable (decide(state)) that runs INSIDE
+    the state lock against the freshly loaded state and returns the advice text, or None when
+    nothing should fire (flag already consumed, or no near miss) -- in which case the caller
+    (`_apply`) must not touch state at all. Returns None when the top-level guard itself fails
+    (not a gitian call, or no session id) -- there is no decision to make at all."""
     tool_name = payload.get("tool_name")
     if not isinstance(tool_name, str) or "gitian" not in tool_name:
-        return None, None
+        return None
     tool_input = payload.get("tool_input")
     tool_input = tool_input if isinstance(tool_input, dict) else {}
     sid = payload.get("session_id")
     if not isinstance(sid, str) or not sid:
-        return None, None
-
-    call_hash = _call_hash(tool_name, tool_input)
+        return None
 
     def decide(state):
         existing_session = state.get("sessions", {}).get(sid)
         existing_session = existing_session if isinstance(existing_session, dict) else {}
-        lint_hashes = existing_session.get("lintHashes")
-        lint_hashes = lint_hashes if isinstance(lint_hashes, list) else []
-        if call_hash in lint_hashes:
-            return None  # identical retry -- silent, state untouched (pinned decision 5)
-
         flags = existing_session.get("flags")
         flags = flags if isinstance(flags, dict) else {}
+        if flags.get(NEAR_MISS_FLAG):
+            return None
 
         cached_topics = _cached_topics(state, _server_key())
         mentioned = _as_slug_list(tool_input.get("topics")) + _as_slug_list(tool_input.get("mentions"))
+        return _check_near_miss(mentioned, cached_topics)
 
-        triggered = []
-        if not flags.get("lint_empty_topics"):
-            text = _check_empty_topics(tool_name, tool_input, cached_topics)
-            if text is not None:
-                triggered.append(("lint_empty_topics", text))
-        if not flags.get("lint_near_miss"):
-            text = _check_near_miss(mentioned, cached_topics)
-            if text is not None:
-                triggered.append(("lint_near_miss", text))
-        if not flags.get("lint_project_topic"):
-            text = _check_project_topic(tool_input, mentioned)
-            if text is not None:
-                triggered.append(("lint_project_topic", text))
-
-        return triggered or None
-
-    return decide, call_hash
+    return decide
 
 
-def _apply(path, decide, sid, call_hash):
-    """One locked read-modify-write: decide against the freshly loaded state and, only if
-    something triggered, persist the flags + hash and return the triggered bullet texts. Returns
-    None (no write) when the retry short-circuit hits or nothing triggers."""
+def _apply(path, decide, sid):
+    """One locked read-modify-write: decide against the freshly loaded state and, only if the rule
+    fired, persist its flag and return the advice text. Returns None (no write) otherwise."""
 
     def mutate():
         state = state_mod.load(path)
-        triggered = decide(state)
-        if not triggered:
-            return None  # no rule identified anything -- do NOT store the hash either
+        text = decide(state)
+        if not text:
+            return None
 
         session = _touch_session(state, sid)
-        for flag_name, _text in triggered:
-            session["flags"][flag_name] = True
-        lint_hashes = session.get("lintHashes")
-        if not isinstance(lint_hashes, list):
-            lint_hashes = []
-        lint_hashes.append(call_hash)
-        session["lintHashes"] = lint_hashes
+        session["flags"][NEAR_MISS_FLAG] = True
         session["updatedAt"] = state_mod.now_iso()
         state_mod.save(path, state_mod.finalize(state))
-        return [text for _flag_name, text in triggered]
+        return text
 
     return state_mod.with_lock(path, mutate)
 
 
 def main():
     payload = _parse_stdin()
-    decide, call_hash = lint(payload)
+    decide = lint(payload)
     if decide is None:
         return
 
     sid = payload.get("session_id")
-    path = state_mod.state_path()
-    triggered_texts = _apply(path, decide, sid, call_hash)
-    if not triggered_texts:
+    text = _apply(state_mod.state_path(), decide, sid)
+    if not text:
         return
 
-    reason = REASON_PREFIX + "\n" + "\n".join("- %s" % text for text in triggered_texts)
+    # additionalContext and NOTHING else under hookSpecificOutput: no permissionDecision, so the
+    # call is neither blocked nor pre-approved.
     output = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
+            "additionalContext": CONTEXT_PREFIX + "\n- " + text,
         }
     }
     sys.stdout.write(json.dumps(output))

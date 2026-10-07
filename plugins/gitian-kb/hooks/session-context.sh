@@ -28,6 +28,14 @@
 #     before continuing (PreCompact hooks can't reach the model, so the post-compaction
 #     SessionStart is the earliest hookable moment; the compaction summary is generated from the
 #     full pre-squash context, so distilling it now loses the least)
+#   - INSIDE A DELEGATED SESSION (the payload carries `agent_id`, which Claude Code sets only when
+#     a hook fires inside a subagent -- the harvest.py convention -- or `agent_type`, the field
+#     SessionStart actually documents, present for a subagent's type or a `claude --agent <name>`
+#     session), none of the dispatch/brief instructions above: a subagent cannot spawn kb-librarian or brief kb-scribe, and telling it
+#     to (a compaction handoff above all) only produced a session trying to do something it has no
+#     tool for. It gets the inline-work line, the markup rule and the derived lines instead, and
+#     no source-profile tail (whose resume line also points at kb-librarian, and whose stamping
+#     would record the parent's session as having seen a vocabulary it never read).
 #   - a source-profile tail computed against the shared nudge state (see state.py), delegated to
 #     session_digest.py: on resume, zero/one/two lines noting a moved vocab revision and/or a
 #     stale (>12h) session record. There is deliberately NO vocab digest on startup/clear/compact
@@ -52,6 +60,17 @@ session_id="$(printf '%s' "$hook_input" | grep -o '"session_id" *: *"[^"]*"' | h
 # `transcript_path` is this session's JSONL -- the scribe's only route to what was actually said.
 transcript_path="$(printf '%s' "$hook_input" | grep -o '"transcript_path" *: *"[^"]*"' | head -n 1 |
   sed 's/.*"transcript_path" *: *"\([^"]*\)".*/\1/')"
+# `agent_id` is present only when the hook fires inside a subagent; `agent_type` is the field
+# SessionStart documents (a subagent's type, or the name a `claude --agent` session runs as).
+# Either one marks a delegated session -- see the header.
+agent_id="$(printf '%s' "$hook_input" | grep -o '"agent_id" *: *"[^"]*"' | head -n 1 |
+  sed 's/.*"agent_id" *: *"\([^"]*\)".*/\1/')"
+agent_type="$(printf '%s' "$hook_input" | grep -o '"agent_type" *: *"[^"]*"' | head -n 1 |
+  sed 's/.*"agent_type" *: *"\([^"]*\)".*/\1/')"
+delegated=""
+if [ -n "$agent_id" ] || [ -n "$agent_type" ]; then
+  delegated="1"
+fi
 
 # Unknown/missing source (unparsable stdin, a future source value, ...) behaves like startup.
 case "$start_source" in
@@ -133,13 +152,18 @@ if [ -n "$transcript_path" ]; then
   context="${context}\n- transcript: ${transcript_path}"
   context="${context}\n- transcript-extract: python3 ${extractor}"
 fi
-context="${context}\n\nKB work is delegated: dispatch \`kb-librarian\` to orient before substantive work, brief \`kb-scribe\` (10-20 lines -- what happened and WHY) at completion points. You decide WHEN a publish is warranted and WHAT mattered; the scribe authors and revises. Never auto-publish."
-context="${context}\n\`get\` directly only what you will act on; a one-off \`search\`/\`get\` stays inline."
-context="${context}\nOne scribe and one librarian in flight; a follow-up on the same item goes to the LIVE agent via \`SendMessage\`. Every brief states \`kb\` (the KB the human named, else \`auto\`), \`repo\` as owner/name and the branch -- a subagent sees none of this context. Docs and journal entries with an org-owned \`repo\` route to that org's team KB, memories never; with neither \`kb\` nor \`repo\` a write can only land in \`home\`. The scribe reports \`landed_in\`. Pass the transcript lines when they hold the substance."
-context="${context}\nA subagent (you cannot spawn one)? Read the gitian-kb skill's \`references/authoring.md\` and work inline."
+if [ -z "$delegated" ]; then
+  context="${context}\n\nKB work is delegated: dispatch \`kb-librarian\` to orient before substantive work, brief \`kb-scribe\` (10-20 lines -- what happened and WHY) at completion points. You decide WHEN a publish is warranted and WHAT mattered; the scribe authors and revises. Never auto-publish."
+  context="${context}\n\`get\` directly only what you will act on; a one-off \`search\`/\`get\` stays inline."
+  context="${context}\nOne scribe and one librarian in flight; a follow-up on the same item goes to the LIVE agent via \`SendMessage\`. Every brief states \`kb\` (the KB the human named, else \`auto\`), \`repo\` as owner/name and the branch -- a subagent sees none of this context. Docs and journal entries with an org-owned \`repo\` route to that org's team KB, memories never; with neither \`kb\` nor \`repo\` a write can only land in \`home\`. The scribe reports \`landed_in\`. Pass the transcript lines when they hold the substance."
+  context="${context}\nA subagent (you cannot spawn one)? Read the gitian-kb skill's \`references/authoring.md\` and work inline."
+else
+  # A delegated session: no dispatch/brief instructions it has no tool to follow (see header).
+  context="${context}\n\nThis is a delegated or named-agent session: KB work here happens inline, per the gitian-kb skill's \`references/authoring.md\`, not through kb-librarian/kb-scribe dispatches."
+fi
 context="${context}\nKB bodies are Obsidian-flavored intent docs (\`[[slug]]\` wikilinks). NEVER inject gitian markup into a codebase that isn't already using the gitian docs system."
 
-if [ "$start_source" = "compact" ]; then
+if [ "$start_source" = "compact" ] && [ -z "$delegated" ]; then
   context="${context}\n\nA compaction just squashed this conversation. Before continuing the task, brief \`kb-scribe\` for a \`type: handoff\` doc -- pass the transcript lines above -- capturing current state, decisions in flight, and next steps, written so a fresh agent could resume from it alone."
 fi
 
@@ -150,7 +174,7 @@ fi
 # failure here (missing python3/script, corrupt state, anything) just leaves the tail empty;
 # nothing built above is affected.
 extra=""
-if [ -n "$d" ] && [ -f "$d/session_digest.py" ] && command -v python3 >/dev/null 2>&1; then
+if [ -z "$delegated" ] && [ -n "$d" ] && [ -f "$d/session_digest.py" ] && command -v python3 >/dev/null 2>&1; then
   extra="$(python3 "$d/session_digest.py" "$start_source" "$session_id" 2>/dev/null || true)"
 fi
 [ -n "$extra" ] && context="${context}${extra}"

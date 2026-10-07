@@ -417,17 +417,24 @@ The nine nudges:
 1. **Session-start context** (SessionStart) — on startup/clear/compact, the delegation directive
    plus the derived repo/branch/date and transcript lines; on resume, zero/one/two lines noting a
    moved vocab revision and/or a stale (>12h) session record. Silent whenever there's nothing worth
-   reporting.
-2. **Orientation check** (PreToolUse on `Edit`/`Write`/`NotebookEdit`) — denies once, advisory, if
-   this session's first file mutation happens with zero gitian KB reads recorded yet: a reminder to
-   `file_intents`/`search`/`neighbors` before touching paths a plan elsewhere may already claim.
-   States explicitly that the denial is advisory and re-sending the identical call passes through
-   untouched.
-3. **Publish lint** (PreToolUse on `publish_doc`/`publish_memory`/`publish_entry`/`append_entry`) —
-   a client-side echo of the server's own lint (empty `topics`, a project/repo-name topic, a
-   near-miss slug against the cached vocab) fired before the call ever reaches the server. The hook
-   hashes the intercepted call, so an identical re-send passes untouched; `append_entry` is exempt
-   from the empty-topics check on append, same as the server (linted only on create).
+   reporting. Inside a **delegated session** (a subagent — the hook payload carries `agent_id`) it
+   carries no dispatch or brief instruction at all, the post-compaction handoff included: a
+   subagent cannot spawn `kb-librarian` or brief `kb-scribe`, so it gets the inline-work pointer
+   to this file instead.
+2. **Orientation check** (PreToolUse on `Edit`/`Write`/`NotebookEdit`) — **never blocks**: once,
+   if this session's first file mutation happens with zero gitian KB reads recorded yet, it adds
+   context beside the edit's result (the edit itself goes through) — a reminder to orient
+   (`file_intents`/`search`/`neighbors`, via `kb-librarian`) before further edits touch paths a
+   plan elsewhere may already claim. Silent inside a delegated session, whose remedy (dispatch the
+   librarian) it could not follow.
+3. **Publish lint** (PreToolUse on `publish_doc`/`publish_memory`/`publish_entry`/`append_entry`/
+   `patch_doc`/`patch_memory`) — **never blocks**: it adds context beside the tool's result and
+   lets the call through untouched. One rule, the one the server cannot see: a topic or mention
+   slug within two edits of a cached vocabulary slug ("did you mean"), which the server would
+   otherwise mint as a near-duplicate topic. If it was a typo, correct the item with a follow-up
+   revision (`patch_doc`/`patch_memory` replace the lists wholesale) and `retract_topic` the stray
+   slug if the server reports it minted. Empty topics and a project/repo-name topic are left to the
+   server's own `no_topics`/`project_name_topic` warnings in the same response.
 4. **Routing guard** (PreToolUse on `publish_doc`/`publish_entry`/`append_entry`) — stateless and
    deterministic, not once-per-session: it denies a write passing **neither `kb` nor `repo`** (such
    a write cannot route, so it lands in `home`) and names the `repo` to set; an explicit `kb` —
@@ -435,26 +442,26 @@ The nine nudges:
    for any write already carrying one of the two fields.
 5. **Commit-nudge** (PostToolUse on `Bash`) — once per session, if a real commit (or `gh pr merge`)
    lands with no `append_entry`/journal activity in the last 2 hours, an advisory reminder to
-   journal it. Silent whenever that 2h damper is already satisfied.
+   journal it. Silent whenever that 2h damper is already satisfied, and inside a delegated session.
 6. **Stop publish-reminder** (Stop) — once per session, blocks-with-reason if this turn crossed the
    "substantial work" line (≥3 `Edit`/`Write` or ≥1 commit in the transcript) with zero gitian
-   publish/append calls anywhere. Always silent on a resumed `stop_hook_active` pass (loop guard) or
-   whenever something was actually published.
+   publish/append calls anywhere. Always silent on a resumed `stop_hook_active` pass (loop guard),
+   inside a delegated session, or whenever something was actually published.
 7. **Mint follow-up** (PostToolUse, riding the same harvest pass as vocab caching) — the first time
    a session sees a given auto-minted, undescribed topic slug in a response's
    `organic_topics_minted` warning, one line naming it and pointing at an immediate `publish_topic`
    call; silent on every later repeat of a slug already prompted this session.
 8. **Server warnings** — `no_topics`, `project_name_topic`, and `undescribed_topics_minted` (see
-   **Publishing rules** above) are advisory, never rejections — the client-side lint (nudge 3)
-   usually catches the same conditions earlier, before the round trip even happens.
+   **Publishing rules** above) are advisory, never rejections, and they are the only place those
+   conditions are reported — the client-side lint (nudge 3) no longer repeats them.
 9. **`/gitian-kb:status`** — run any time to inspect the cache directly: per-server vocab
    revision/age/topic count/undescribed topics, last publish/append times, the current session's
    counters, and which once-per-session flags have already fired this epoch. Read-only, never
    modifies state.
 
 None of this should surprise an agent mid-session: a nudge names itself as advisory, says what to
-do next, and — except for the deny-once orientation check and the block-once stop reminder, both of
-which say so — never stops you from proceeding.
+do next, and — except for the block-once stop reminder at the end of a turn, which says so — never
+stops you from proceeding. (The routing guard is not a nudge: it refuses a write that cannot route.)
 
 ## Companion plugins
 

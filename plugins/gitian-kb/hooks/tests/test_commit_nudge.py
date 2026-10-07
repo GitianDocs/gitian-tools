@@ -141,6 +141,20 @@ class FiresOnceNoAppendRecorded(CommitNudgeTestCase):
         self.assert_fired(proc)
 
 
+class DelegatedSession(CommitNudgeTestCase):
+    """A commit made inside a subagent (`agent_id` present) must not tell that subagent to brief
+    kb-scribe -- it cannot -- and must leave the once-per-session flag for the primary."""
+
+    def test_silent_inside_a_subagent_and_flag_left_unspent(self):
+        payload = envelope("git commit -m 'fix things'")
+        payload["agent_id"] = "agent-123"
+        self.assert_silent(self.run_hook(payload))
+        flags = self.dump_state().get("sessions", {}).get("sess-1", {}).get("flags", {})
+        self.assertNotIn("commit_nudge", flags)
+
+        self.assert_fired(self.run_hook(envelope("git commit -m 'fix more things'")))
+
+
 class DamperSuppressesWithoutConsumingFlag(CommitNudgeTestCase):
     def test_recent_append_silences_and_leaves_flag_unconsumed(self):
         self.merge(

@@ -22,7 +22,8 @@ PUBLISH_LINT_SH = HOOKS_DIR / "publish-lint.sh"
 STATE_PY = HOOKS_DIR / "state.py"
 
 SERVER_KEY = "https://gitian.dev/api/mcp"  # default GITIAN_KB_URL, per the state contract
-REASON_PREFIX = "gitian-kb publish lint (advisory - re-send the identical call to proceed unchanged):"
+CONTEXT_PREFIX = "gitian-kb publish lint (advisory -- the call was not blocked):"
+NEAR_MISS_VOCAB = [{"slug": "kb-discipline", "description": "KB discipline", "degree": 4}]
 
 
 def envelope(tool_name, tool_input=None, session_id="sess-1"):
@@ -86,20 +87,25 @@ class PublishLintTestCase(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, msg="stderr=%r" % proc.stderr)
         self.assertEqual(proc.stdout, "")
 
-    def assert_denied(self, proc):
+    def assert_advised(self, proc):
+        """The lint's ONLY output shape: PreToolUse additionalContext and nothing that decides.
+        No permissionDecision at all -- not "deny" (that blocked delegated writers), and never
+        "allow" (that would skip the user's own permission prompts)."""
         self.assertEqual(proc.returncode, 0, msg="stderr=%r" % proc.stderr)
         body = json.loads(proc.stdout)
+        self.assertEqual(set(body), {"hookSpecificOutput"})
         hook_output = body["hookSpecificOutput"]
+        self.assertEqual(set(hook_output), {"hookEventName", "additionalContext"})
         self.assertEqual(hook_output["hookEventName"], "PreToolUse")
-        self.assertEqual(hook_output["permissionDecision"], "deny")
-        reason = hook_output["permissionDecisionReason"]
-        self.assertTrue(reason.startswith(REASON_PREFIX), msg=reason)
-        return reason
+        context = hook_output["additionalContext"]
+        self.assertTrue(context.startswith(CONTEXT_PREFIX), msg=context)
+        self.assertNotIn("re-send", context)
+        return context
 
 
 class GuardClause(PublishLintTestCase):
     def test_non_gitian_tool_is_silent_and_untouched(self):
-        proc = self.run_lint(envelope("Write", tool_input={"topics": []}))
+        proc = self.run_lint(envelope("Write", tool_input={"topics": ["kb-disciplne"]}))
         self.assert_silent(proc)
         self.assertFalse(os.path.exists(self.state_file))
 
@@ -114,213 +120,114 @@ class GuardClause(PublishLintTestCase):
         self.assertFalse(os.path.exists(self.state_file))
 
     def test_missing_session_id_is_silent(self):
-        payload = envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={})
+        payload = envelope(
+            "mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"topics": ["kb-disciplne"]}
+        )
         del payload["session_id"]
         proc = self.run_lint(payload)
         self.assert_silent(proc)
 
-    def test_corrupt_state_file_is_survived_and_rebuilt(self):
+    def test_corrupt_state_file_is_survived_without_advice(self):
+        # A corrupt file loads as an empty state: no cached vocabulary, so nothing to compare a
+        # slug against -- silent, never a traceback.
         os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
         with open(self.state_file, "w", encoding="utf-8") as fh:
             fh.write("{not valid json ][ at all")
 
         proc = self.run_lint(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"title": "x"})
-        )
-        self.assert_denied(proc)
-
-        state = self.dump_state()
-        self.assertEqual(state.get("schemaVersion"), 1)
-        self.assertTrue(state["sessions"]["sess-1"]["flags"]["lint_empty_topics"])
-
-
-class EmptyTopicsRule(PublishLintTestCase):
-    def test_fires_once_with_candidates_from_cached_vocab(self):
-        self.seed_vocab(
-            [
-                {"slug": "auth", "description": "Authentication flows", "degree": 5},
-                {"slug": "billing", "description": "Billing & invoices", "degree": 3},
-                {"slug": "kb", "description": "Knowledge base", "degree": 1},
-            ]
-        )
-        proc = self.run_lint(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"title": "x"})
-        )
-        reason = self.assert_denied(proc)
-        self.assertIn("auth - Authentication flows", reason)
-        self.assertIn("billing - Billing & invoices", reason)
-        self.assertIn("kb - Knowledge base", reason)
-
-        state = self.dump_state()
-        session = state["sessions"]["sess-1"]
-        self.assertTrue(session["flags"]["lint_empty_topics"])
-        self.assertEqual(len(session["lintHashes"]), 1)
-
-    def test_missing_topics_key_also_fires(self):
-        proc = self.run_lint(envelope("mcp__plugin_gitian-kb_gitian__publish_memory", tool_input={}))
-        self.assert_denied(proc)
-
-    def test_empty_vocab_cache_advises_reading_vocab_resource(self):
-        proc = self.run_lint(envelope("mcp__plugin_gitian-kb_gitian__publish_memory", tool_input={}))
-        reason = self.assert_denied(proc)
-        self.assertIn("gitian-kb://vocab", reason)
-        self.assertIn("1-3 topics", reason)
-        # This lint fires in whoever is WRITING -- normally kb-scribe, a subagent with no
-        # resource-read tool at all, so the advice has to name the tool that works there.
-        self.assertIn("read_resource", reason)
-
-    def test_populated_topics_does_not_fire(self):
-        proc = self.run_lint(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
-                tool_input={"title": "x", "topics": ["auth"]},
+                "mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"topics": ["kb-disciplne"]}
             )
         )
         self.assert_silent(proc)
 
-    def test_identical_resend_passes_silently(self):
-        payload = envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"title": "x"})
-        first = self.run_lint(payload)
-        self.assert_denied(first)
 
-        second = self.run_lint(payload)
-        self.assert_silent(second)
+class NeverBlocks(PublishLintTestCase):
+    """The whole point of 0.24.0: an advisory lint must never stand between a writer and a
+    publish. A delegated writer (kb-scribe) read the old once-per-rule deny as a refusal."""
 
-        # A silent identical retry must not append a second hash.
-        state = self.dump_state()
-        self.assertEqual(len(state["sessions"]["sess-1"]["lintHashes"]), 1)
-
-    def test_corrected_call_passes(self):
-        first = self.run_lint(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"title": "x"})
-        )
-        self.assert_denied(first)
-
-        second = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
-                tool_input={"title": "x", "topics": ["auth"]},
-            )
-        )
-        self.assert_silent(second)
-
-    def test_different_offending_call_silent_after_flag_consumed(self):
-        first = self.run_lint(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"title": "a"})
-        )
-        self.assert_denied(first)
-
-        # A different call (different tool_input -> different hash) that still has empty topics --
-        # the rule's flag was already consumed this epoch, so this must be silent.
-        second = self.run_lint(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"title": "b"})
-        )
-        self.assert_silent(second)
-
-    def test_epoch_bump_rearms_the_rule(self):
-        first = self.run_lint(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"title": "a"})
-        )
-        self.assert_denied(first)
-
-        self.bump_epoch("sess-1")
-
-        # Same offending shape as before the bump -- epoch bump cleared both flags and
-        # lintHashes, so this is neither a suppressed-by-flag nor a suppressed-by-hash case.
-        second = self.run_lint(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"title": "a"})
-        )
-        self.assert_denied(second)
-
-
-class AppendEntryExemption(PublishLintTestCase):
-    def test_no_topics_is_not_flagged_by_r1(self):
-        proc = self.run_lint(
-            envelope("mcp__plugin_gitian-kb_gitian__append_entry", tool_input={"slug": "journal-x"})
-        )
-        self.assert_silent(proc)
-
-    def test_near_miss_topic_still_caught_by_r2(self):
-        self.seed_vocab([{"slug": "kb-discipline", "description": "KB discipline", "degree": 4}])
-        proc = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__append_entry",
-                tool_input={"slug": "journal-x", "topics": ["kb-disciplne"]},
-            )
-        )
-        reason = self.assert_denied(proc)
-        self.assertIn('"kb-disciplne"', reason)
-        self.assertIn('"kb-discipline"', reason)
-
-    def test_project_name_topic_still_caught_by_r3(self):
-        proc = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__append_entry",
-                tool_input={"slug": "journal-x", "project": "gitian", "topics": ["gitian"]},
-            )
-        )
-        reason = self.assert_denied(proc)
-        self.assertIn('"gitian"', reason)
-
-
-class PatchToolCoverage(PublishLintTestCase):
-    """[[kb-scribe-delegation]]: hooks.json now routes patch_doc/patch_memory through this lint
-    too, since a patch REPLACES a manifest list wholesale and can therefore mistype a topic
-    exactly as a publish can. r1 must stay out of it: on a sparse patch an omitted `topics` means
-    "unchanged", not "no topics"."""
-
-    def test_patch_doc_with_no_topics_is_not_flagged_by_r1(self):
-        proc = self.run_lint(
-            envelope("mcp__plugin_gitian-kb_gitian__patch_doc", tool_input={"slug": "some-plan"})
-        )
-        self.assert_silent(proc)
-
-    def test_patch_memory_with_no_topics_is_not_flagged_by_r1(self):
-        proc = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__patch_memory",
-                tool_input={"slug": "a-memory", "status": "active"},
-            )
-        )
-        self.assert_silent(proc)
-
-    def test_patch_doc_near_miss_topic_is_caught_by_r2(self):
-        self.seed_vocab([{"slug": "kb-discipline", "description": "KB discipline", "degree": 4}])
-        proc = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__patch_doc",
-                tool_input={"slug": "some-plan", "topics": ["kb-disciplne"]},
-            )
-        )
-        reason = self.assert_denied(proc)
-        self.assertIn('did you mean "kb-discipline"?', reason)
-
-
-class NearMissRule(PublishLintTestCase):
-    def test_fires_with_did_you_mean_suggestion(self):
-        self.seed_vocab([{"slug": "kb-discipline", "description": "KB discipline", "degree": 4}])
+    def test_firing_lint_emits_context_and_no_permission_decision(self):
+        self.seed_vocab(NEAR_MISS_VOCAB)
         proc = self.run_lint(
             envelope(
                 "mcp__plugin_gitian-kb_gitian__publish_doc",
                 tool_input={"topics": ["kb-disciplne"]},
             )
         )
-        reason = self.assert_denied(proc)
-        self.assertIn('did you mean "kb-discipline"?', reason)
+        context = self.assert_advised(proc)
+        self.assertNotIn("permissionDecision", proc.stdout)
+        # The call already went through, so the remedy is a follow-up revision, not a re-send.
+        self.assertIn("`patch_doc`/`patch_memory`", context)
+        self.assertIn("`retract_topic`", context)
+
+
+class ServerDuplicatesRetired(PublishLintTestCase):
+    """Rules the server already returns as warnings in the same tool response are gone: empty
+    topics (`no_topics`) and a project/repo-name topic (`project_name_topic`)."""
+
+    def test_empty_topics_is_left_to_the_server(self):
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        for tool in ("publish_doc", "publish_memory", "publish_entry"):
+            with self.subTest(tool=tool):
+                proc = self.run_lint(
+                    envelope("mcp__plugin_gitian-kb_gitian__%s" % tool, tool_input={"title": "x"})
+                )
+                self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file) and self.dump_state().get("sessions"))
+
+    def test_project_name_topic_is_left_to_the_server(self):
+        for tool_input in (
+            {"project": "gitian", "topics": ["gitian"]},
+            {"repo": "GitianDocs/gitian-kb", "topics": ["gitian-kb"]},
+        ):
+            with self.subTest(tool_input=tool_input):
+                proc = self.run_lint(
+                    envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input=tool_input)
+                )
+                self.assert_silent(proc)
+
+
+class NearMissRule(PublishLintTestCase):
+    def test_fires_with_did_you_mean_suggestion(self):
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        proc = self.run_lint(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                tool_input={"topics": ["kb-disciplne"]},
+            )
+        )
+        context = self.assert_advised(proc)
+        self.assertIn('"kb-disciplne" -- did you mean "kb-discipline"?', context)
+        self.assertTrue(self.dump_state()["sessions"]["sess-1"]["flags"]["lint_near_miss"])
 
     def test_checks_mentions_field_too(self):
-        self.seed_vocab([{"slug": "kb-discipline", "description": "KB discipline", "degree": 4}])
+        self.seed_vocab(NEAR_MISS_VOCAB)
         proc = self.run_lint(
             envelope(
                 "mcp__plugin_gitian-kb_gitian__publish_doc",
                 tool_input={"topics": ["kb-discipline"], "mentions": ["kb-disciplne"]},
             )
         )
-        reason = self.assert_denied(proc)
-        self.assertIn('did you mean "kb-discipline"?', reason)
+        context = self.assert_advised(proc)
+        self.assertIn('did you mean "kb-discipline"?', context)
+
+    def test_append_entry_and_patch_tools_are_covered(self):
+        # A patch REPLACES a manifest list wholesale and an append union-merges one, so a mistyped
+        # slug is exactly as reachable there as on a publish.
+        for tool in ("append_entry", "patch_doc", "patch_memory", "publish_entry"):
+            with self.subTest(tool=tool):
+                self.bump_epoch("sess-1")
+                self.seed_vocab(NEAR_MISS_VOCAB)
+                proc = self.run_lint(
+                    envelope(
+                        "mcp__plugin_gitian-kb_gitian__%s" % tool,
+                        tool_input={"slug": "x", "topics": ["kb-disciplne"]},
+                    )
+                )
+                self.assert_advised(proc)
 
     def test_exact_cached_slug_does_not_fire(self):
-        self.seed_vocab([{"slug": "kb-discipline", "description": "KB discipline", "degree": 4}])
+        self.seed_vocab(NEAR_MISS_VOCAB)
         proc = self.run_lint(
             envelope(
                 "mcp__plugin_gitian-kb_gitian__publish_doc",
@@ -330,8 +237,6 @@ class NearMissRule(PublishLintTestCase):
         self.assert_silent(proc)
 
     def test_empty_cache_disables_the_check(self):
-        # Non-empty topics (so r1 is out of play) but no cached vocab at all -- r2's guard
-        # ("only when the cache is non-empty") means no near-miss check runs.
         proc = self.run_lint(
             envelope(
                 "mcp__plugin_gitian-kb_gitian__publish_doc",
@@ -339,9 +244,10 @@ class NearMissRule(PublishLintTestCase):
             )
         )
         self.assert_silent(proc)
+        self.assertFalse(os.path.exists(self.state_file))
 
     def test_far_slug_beyond_distance_two_does_not_fire(self):
-        self.seed_vocab([{"slug": "kb-discipline", "description": "KB discipline", "degree": 4}])
+        self.seed_vocab(NEAR_MISS_VOCAB)
         proc = self.run_lint(
             envelope(
                 "mcp__plugin_gitian-kb_gitian__publish_doc",
@@ -350,78 +256,39 @@ class NearMissRule(PublishLintTestCase):
         )
         self.assert_silent(proc)
 
+    def test_fires_once_per_epoch_and_an_epoch_bump_rearms_it(self):
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        payload = envelope(
+            "mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"topics": ["kb-disciplne"]}
+        )
+        self.assert_advised(self.run_lint(payload))
 
-class ProjectNameRule(PublishLintTestCase):
-    def test_fires_when_topic_equals_project(self):
-        proc = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
-                tool_input={"project": "gitian", "topics": ["gitian"]},
+        # The same advice again, or a different near miss, stays quiet this epoch.
+        self.assert_silent(self.run_lint(payload))
+        self.assert_silent(
+            self.run_lint(
+                envelope(
+                    "mcp__plugin_gitian-kb_gitian__publish_doc",
+                    tool_input={"topics": ["kb-disciplin"]},
+                )
             )
         )
-        reason = self.assert_denied(proc)
-        self.assertIn('"gitian"', reason)
 
-    def test_fires_when_topic_equals_repo_basename(self):
-        proc = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
-                tool_input={"repo": "GitianDocs/gitian-kb", "topics": ["gitian-kb"]},
+        self.bump_epoch("sess-1")
+        self.assert_advised(self.run_lint(payload))
+
+    def test_writes_no_lint_hash(self):
+        # Nothing is ever denied, so there is no retry to recognise.
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        self.assert_advised(
+            self.run_lint(
+                envelope(
+                    "mcp__plugin_gitian-kb_gitian__publish_doc",
+                    tool_input={"topics": ["kb-disciplne"]},
+                )
             )
         )
-        reason = self.assert_denied(proc)
-        self.assertIn('"gitian-kb"', reason)
-
-    def test_case_insensitive_match(self):
-        proc = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
-                tool_input={"project": "Gitian", "topics": ["gitian"]},
-            )
-        )
-        reason = self.assert_denied(proc)
-        self.assertIn("gitian", reason.lower())
-
-    def test_no_project_or_repo_does_not_fire(self):
-        proc = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
-                tool_input={"topics": ["gitian"]},
-            )
-        )
-        self.assert_silent(proc)
-
-    def test_unrelated_topic_does_not_fire(self):
-        proc = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
-                tool_input={"project": "gitian", "topics": ["auth"]},
-            )
-        )
-        self.assert_silent(proc)
-
-
-class MultipleRulesTogether(PublishLintTestCase):
-    def test_near_miss_and_project_name_both_bullet_in_one_reason(self):
-        self.seed_vocab([{"slug": "kb-discipline", "description": "KB discipline", "degree": 4}])
-        proc = self.run_lint(
-            envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
-                tool_input={
-                    "project": "gitian",
-                    "topics": ["kb-disciplne", "gitian"],
-                },
-            )
-        )
-        reason = self.assert_denied(proc)
-        self.assertIn('did you mean "kb-discipline"?', reason)
-        self.assertIn('"gitian"', reason)
-
-        state = self.dump_state()
-        flags = state["sessions"]["sess-1"]["flags"]
-        self.assertTrue(flags["lint_near_miss"])
-        self.assertTrue(flags["lint_project_topic"])
-        self.assertNotIn("lint_empty_topics", flags)  # topics list was non-empty -- r1 never matched
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"]["lintHashes"], [])
 
 
 if __name__ == "__main__":

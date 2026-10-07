@@ -18,7 +18,9 @@ Guard order (silent no-op on any failure of any of these):
   2. tool_input.command must look like a real commit action -- see _is_commit_action().
   3. the raw tool_response text must not look like a failed commit -- see _looks_like_failure().
      A failed commit never touches state at all (no write, no flag consumed).
-  4. session_id must be a non-empty string.
+  4. session_id must be a non-empty string, and the payload must carry no `agent_id`: inside a
+     DELEGATED session (a subagent) the nudge's "brief kb-scribe" is an instruction it has no tool
+     to follow, so it stays silent there and leaves the once-per-session flag unspent.
   5. damper: no tracked server's lastAppendAt may fall within the last two hours -- checked
      WITHOUT consuming the once-per-session flag, so a later commit (once the damper window has
      passed) still gets its own chance to fire.
@@ -250,6 +252,8 @@ def main():
     sid = payload.get("session_id")
     if not isinstance(sid, str) or not sid:
         return
+    if payload.get("agent_id"):
+        return  # a delegated session cannot brief kb-scribe -- see guard 4 in the docstring
 
     path = state_mod.state_path()
     state = state_mod.load(path)

@@ -81,24 +81,46 @@ class OrientationTestCase(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, msg="stdout=%r stderr=%r" % (proc.stdout, proc.stderr))
         self.assertEqual(proc.stdout, "")
 
-    def assert_deny(self, proc):
+    def assert_advised(self, proc):
+        """The hook's ONLY output shape: PreToolUse additionalContext and nothing that decides --
+        no permissionDecision at all, neither "deny" (an advisory check must not block) nor
+        "allow" (that would skip the user's own permission prompts)."""
         self.assertEqual(proc.returncode, 0, msg="stderr=%r" % proc.stderr)
         payload = json.loads(proc.stdout)
+        self.assertEqual(set(payload), {"hookSpecificOutput"})
         out = payload["hookSpecificOutput"]
+        self.assertEqual(set(out), {"hookEventName", "additionalContext"})
         self.assertEqual(out["hookEventName"], "PreToolUse")
-        self.assertEqual(out["permissionDecision"], "deny")
-        return out["permissionDecisionReason"]
+        return out["additionalContext"]
+
+
+class DelegatedSession(OrientationTestCase):
+    """Inside a subagent the payload carries `agent_id`. The advice's remedy is "dispatch
+    kb-librarian", which a subagent has no tool for, so it stays silent there."""
+
+    def test_a_delegated_sessions_first_mutation_passes_and_still_counts_as_an_edit(self):
+        payload = envelope()
+        payload["agent_id"] = "agent-123"
+        self.assert_silent(self.run_hook(payload))
+
+        session = self.dump_state()["sessions"]["sess-1"]
+        self.assertEqual(session["edits"], 1)
+        # The flag is left for the primary, whose own first zero-read mutation still gets it.
+        self.assertNotIn("orientation", session.get("flags", {}))
+        self.assert_advised(self.run_hook(envelope()))
 
 
 class ZeroReadsFiresOnce(OrientationTestCase):
-    def test_first_mutation_with_zero_reads_denies_with_advisory_reason(self):
+    def test_first_mutation_with_zero_reads_advises_without_blocking(self):
         proc = self.run_hook(envelope())
-        reason = self.assert_deny(proc)
+        reason = self.assert_advised(proc)
         self.assertIn("file_intents", reason)
         self.assertIn("search", reason)
         self.assertIn("neighbors", reason)
         self.assertIn("advisory", reason.lower())
-        self.assertIn("re-send", reason.lower())
+        self.assertIn("not blocked", reason)
+        # Nothing was refused, so there is no re-send to tell the model about.
+        self.assertNotIn("re-send", reason.lower())
         # [[kb-scribe-delegation]]: orientation is a DISPATCH now -- the librarian sweeps and
         # hands back a digest; the primary doesn't run the three reads itself.
         self.assertIn("kb-librarian", reason)
@@ -106,18 +128,18 @@ class ZeroReadsFiresOnce(OrientationTestCase):
         state = self.dump_state()
         session = state["sessions"]["sess-1"]
         self.assertTrue(session["flags"]["orientation"])
-        # The denied call itself must not be counted as a passed-through edit.
-        self.assertEqual(session.get("edits", 0), 0)
+        # The call went through, so it counts as an edit like any other.
+        self.assertEqual(session.get("edits", 0), 1)
 
-    def test_identical_resend_passes_silently_and_increments_edits(self):
+    def test_later_mutations_are_silent_and_every_one_counts(self):
         first = self.run_hook(envelope())
-        self.assert_deny(first)
+        self.assert_advised(first)
 
         second = self.run_hook(envelope())
         self.assert_silent(second)
 
         state = self.dump_state()
-        self.assertEqual(state["sessions"]["sess-1"]["edits"], 1)
+        self.assertEqual(state["sessions"]["sess-1"]["edits"], 2)
 
     def test_fires_at_most_once_across_many_calls(self):
         self.run_hook(envelope())
@@ -125,7 +147,7 @@ class ZeroReadsFiresOnce(OrientationTestCase):
             proc = self.run_hook(envelope())
             self.assert_silent(proc)
         state = self.dump_state()
-        self.assertEqual(state["sessions"]["sess-1"]["edits"], 3)
+        self.assertEqual(state["sessions"]["sess-1"]["edits"], 4)
 
 
 class RepoClause(OrientationTestCase):
@@ -138,7 +160,7 @@ class RepoClause(OrientationTestCase):
                 check=True,
             )
             proc = self.run_hook(envelope(cwd=repo_dir))
-            reason = self.assert_deny(proc)
+            reason = self.assert_advised(proc)
             self.assertIn("acme/widgets", reason)
         finally:
             shutil.rmtree(repo_dir, ignore_errors=True)
@@ -147,11 +169,11 @@ class RepoClause(OrientationTestCase):
         plain_dir = tempfile.mkdtemp(prefix="gks-orientation-plain-")
         try:
             proc = self.run_hook(envelope(cwd=plain_dir))
-            reason = self.assert_deny(proc)
+            reason = self.assert_advised(proc)
             self.assertIn("file_intents", reason)
             # The intents clause is the span between the dispatch line and the search/neighbors
             # half; with no derivable repo it must carry no "on <owner/name>" tail.
-            intents_clause = reason.split("digest: ")[1].split(" plus ")[0]
+            intents_clause = reason.split("orientation digest (")[1].split(" plus ")[0]
             self.assertNotIn(" on ", intents_clause)
         finally:
             shutil.rmtree(plain_dir, ignore_errors=True)
@@ -178,7 +200,7 @@ class ClaudeEphemeralStateIsExempt(OrientationTestCase):
         self.assertEqual(session.get("edits", 0), 0)
         self.assertNotEqual(session.get("flags", {}).get("orientation"), True)
 
-        self.assert_deny(self.run_hook(envelope(tool_input={"file_path": "/repo/src/a.ts"})))
+        self.assert_advised(self.run_hook(envelope(tool_input={"file_path": "/repo/src/a.ts"})))
 
     def test_plans_are_exempt_and_a_notebook_path_is_read_too(self):
         plan = os.path.join(self.config, "plans", "x.md")
@@ -194,31 +216,31 @@ class ClaudeEphemeralStateIsExempt(OrientationTestCase):
         )
         self.assert_silent(proc)
         # The same relative path from a repo cwd is an ordinary edit.
-        self.assert_deny(
+        self.assert_advised(
             self.run_hook(envelope(tool_input={"file_path": "projects/p/memory/fact.md"}, cwd="/repo"))
         )
 
     def test_authored_source_under_the_config_dir_is_not_exempt(self):
         for sub in ("plugins/cache/m/p/1.0.0/hooks/a.sh", "agents/x.md", "skills/s/SKILL.md", "settings.json"):
             with self.subTest(sub=sub):
-                # fresh session per case: the deny fires once per session
+                # fresh session per case: the advice fires once per session
                 proc = self.run_hook(
                     envelope(tool_input={"file_path": os.path.join(self.config, sub)}, session_id=sub)
                 )
-                self.assert_deny(proc)
+                self.assert_advised(proc)
 
     def test_claude_config_dir_override_is_honored(self):
         self.env["CLAUDE_CONFIG_DIR"] = os.path.join(self.tmpdir, "cfg")
         inside = os.path.join(self.tmpdir, "cfg", "plans", "x.md")
         self.assert_silent(self.run_hook(envelope(tool_input={"file_path": inside})))
         # ...and the default location is then an ordinary path.
-        self.assert_deny(
+        self.assert_advised(
             self.run_hook(envelope(tool_input={"file_path": os.path.join(self.config, "plans", "a")}))
         )
 
     def test_a_sibling_directory_sharing_the_prefix_is_not_exempt(self):
         lookalike = os.path.join(self.home, ".claude-backup", "projects", "a.md")
-        self.assert_deny(self.run_hook(envelope(tool_input={"file_path": lookalike})))
+        self.assert_advised(self.run_hook(envelope(tool_input={"file_path": lookalike})))
 
 
 class NonZeroReadsAlwaysSilent(OrientationTestCase):
@@ -242,22 +264,22 @@ class MissingSessionRecord(OrientationTestCase):
         # an explicit gitianReads=0, not silently skipped just because the key is absent.
         self.assertFalse(os.path.exists(self.state_file))
         proc = self.run_hook(envelope(session_id="brand-new-sid"))
-        reason = self.assert_deny(proc)
+        reason = self.assert_advised(proc)
         self.assertIn("file_intents", reason)
 
     def test_absent_session_among_other_tracked_sessions_still_fires(self):
         self.merge({"sessions": {"other-sid": {"gitianReads": 5}}})
         proc = self.run_hook(envelope(session_id="fresh-sid"))
-        self.assert_deny(proc)
+        self.assert_advised(proc)
 
 
 class EpochBumpRearms(OrientationTestCase):
     def test_epoch_bump_clears_the_flag_and_resets_reads_so_it_fires_again(self):
         first = self.run_hook(envelope())
-        self.assert_deny(first)
+        self.assert_advised(first)
 
-        resend = self.run_hook(envelope())
-        self.assert_silent(resend)
+        repeat = self.run_hook(envelope())
+        self.assert_silent(repeat)
 
         bump = self.run_state("bump-epoch", "sess-1")
         self.assertEqual(bump.returncode, 0)
@@ -267,7 +289,7 @@ class EpochBumpRearms(OrientationTestCase):
         self.assertEqual(state["sessions"]["sess-1"]["gitianReads"], 0)
 
         again = self.run_hook(envelope())
-        self.assert_deny(again)
+        self.assert_advised(again)
 
 
 class GuardClause(OrientationTestCase):

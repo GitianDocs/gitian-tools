@@ -206,6 +206,20 @@ class ThresholdCrossing(PublishReminderTestCase):
         self.assertIsNone(self.flag(SID))
 
 
+class DelegatedSession(PublishReminderTestCase):
+    """The reminder's remedy is "brief kb-scribe", which a subagent cannot do: a payload carrying
+    `agent_id` is never blocked, and the flag stays unspent for the primary."""
+
+    def test_agent_id_payload_is_silent_and_leaves_the_flag(self):
+        transcript = self.write_transcript([edit_line()] * 3)
+        payload = self.envelope(transcript_path=transcript)
+        payload["agent_id"] = "agent-123"
+        self.assert_silent(self.run_hook(payload))
+        self.assertIsNone(self.flag(SID))
+
+        self.assert_block(self.run_hook(self.envelope(transcript_path=transcript)))
+
+
 class PublishSuppression(PublishReminderTestCase):
     def test_any_gitian_publish_in_transcript_is_silent_even_with_edits(self):
         transcript = self.write_transcript([edit_line()] * 3 + [publish_line()])

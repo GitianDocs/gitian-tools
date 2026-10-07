@@ -52,6 +52,8 @@ _SESSION_DEFAULTS = {
     # resume/digest pass -- neither has a token to ask which kb a session is bound to) default to
     # the "home" bucket; see session_digest.py's DEFAULT_KB_SLUG.
     "lastSeenVocabRev": {},
+    # Written by no hook since 0.24.0 (the publish lint never denies, so there is no identical
+    # retry to recognise); kept so state files from older installs keep one shape.
     "lintHashes": [],
     "mintPrompted": [],
 }

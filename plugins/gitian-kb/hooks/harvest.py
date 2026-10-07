@@ -259,7 +259,7 @@ def _is_failure_envelope(payload):
 
 def _is_success_envelope(payload):
     """POSITIVE evidence that a write landed. Every successful write answers with the item's
-    `slug` (repository.ts::PublishSuccess, and publish_topic's own `{slug, state, degree}`), and
+    `slug` (repository.ts::PublishSuccess, and publish_topic's own `{slug, state, degree, landed_in}`), and
     the publish/patch/append tails add a numeric `rev`. `rev` is therefore required to be numeric
     only WHEN PRESENT -- publish_topic mints a topic with no revision number at all -- while the
     slug is unconditional: with no slug there is nothing to say was written, and the whole point

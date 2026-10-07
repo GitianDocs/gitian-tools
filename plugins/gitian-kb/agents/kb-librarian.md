@@ -45,7 +45,11 @@ as a tool.
   orientation.
 - **Targeted digest.** "What did we decide about X?" — the answer is spread over two or three items
   and the primary wants the conclusions, not the bodies. `search`, then `get` the two or three best
-  hits, and answer in your own words with the slugs behind each claim.
+  hits, and answer in your own words with the slugs behind each claim. `search` returns best match
+  first: ask in plain words (an item matching any of them comes back, ones matching all of them
+  rank first). A response whose `mode` is `"lexical"` had no semantic help, so before reporting
+  that the KB holds nothing, retry once in the vocabulary a document would use, or `neighbors` the
+  closest hit.
 - **Vocab-delta refresh.** A tool response's `vocab_rev` differs from the value the primary last
   saw. Re-read `gitian-kb://vocab`, diff it against what the primary told you it saw last, and
   report only what changed (new topics, promotions, tombstones, category edits) — not the whole

@@ -200,6 +200,54 @@ class DelegationDirective(SessionContextTestCase):
         )
 
 
+class DelegatedSession(SessionContextTestCase):
+    """A payload carrying `agent_id` comes from inside a subagent, which can neither dispatch
+    kb-librarian nor brief kb-scribe. None of those instructions may reach it -- above all the
+    post-compaction "brief kb-scribe for a handoff", which sent delegated sessions after a tool
+    they do not have."""
+
+    def delegated(self, source, field="agent_id", value="agent-123"):
+        payload = self.envelope(source, session_id="sess-sub")
+        payload[field] = value
+        return payload
+
+    def test_no_dispatch_or_brief_instruction_on_any_source(self):
+        # `agent_id` marks a hook firing inside a subagent; `agent_type` is the field SessionStart
+        # documents (a subagent's type, or a `claude --agent <name>` session). Either one gates.
+        for field, value in (("agent_id", "agent-123"), ("agent_type", "kb-scribe")):
+            for source in ("startup", "resume", "clear", "compact"):
+                with self.subTest(field=field, source=source):
+                    context = self.context_of(
+                        self.run_hook(self.delegated(source, field, value)), source
+                    )
+                    self.assertNotIn("compaction just squashed", context)
+                    self.assertNotIn("type: handoff", context)
+                    self.assertNotIn("dispatch `kb-librarian`", context)
+                    self.assertNotIn("brief `kb-scribe`", context)
+                    self.assertNotIn("SendMessage", context)
+                    # What it does get: the inline-work pointer and the one body rule.
+                    self.assertIn("happens inline", context)
+                    self.assertIn("references/authoring.md", context)
+                    self.assertIn("NEVER inject gitian markup", context)
+
+    def test_no_source_profile_tail_and_no_stamping_for_the_parent_session(self):
+        # The resume tail points at kb-librarian, and stamping would record the PARENT's session
+        # (a subagent's hooks run under it) as having seen a vocabulary nobody read.
+        self.seed_state(
+            servers={SERVER_KEY: {"vocabRev": 9, "topics": [_topic("kb", "d", 1)]}},
+            sessions={"sess-sub": _session_defaults(lastSeenVocabRev=_last_seen(3))},
+        )
+        context = self.context_of(self.run_hook(self.delegated("resume")), "resume")
+        self.assertNotIn("vocab_rev", context)
+        self.assertNotIn("kb-librarian for a vocab-delta", context)
+        stamped = self.dump_state()["sessions"]["sess-sub"]["lastSeenVocabRev"][SERVER_KEY]["home"]
+        self.assertEqual(stamped, 3)
+
+    def test_the_primary_still_gets_the_compact_handoff(self):
+        context = self.context_of(self.run_hook(self.envelope("compact")), "compact")
+        self.assertIn("compaction just squashed", context)
+
+
 class TranscriptLines(SessionContextTestCase):
     def test_transcript_and_extractor_lines_are_emitted_when_the_file_exists(self):
         path = self.write_transcript()

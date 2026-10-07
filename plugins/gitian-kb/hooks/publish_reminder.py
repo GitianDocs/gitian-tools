@@ -14,6 +14,11 @@ its own sidechain transcript, a separate file. So the transcript scan below is j
 MCP traffic fires the PostToolUse harvest under the PARENT's session id, which is what makes the
 scribe's work visible here at all.
 
+Silent inside a DELEGATED session (the payload carries `agent_id`, set only when a hook fires
+inside a subagent): the reminder's remedy is "brief kb-scribe", which a subagent has no tool for.
+Claude Code fires SubagentStop rather than Stop for a subagent today, so this is a guard against a
+payload shape, not a path known to run -- the cost of being wrong the other way is a blocked turn.
+
 Fail-open, always: the loop guard (stop_hook_active) is checked first and unconditionally; a
 missing/unreadable transcript, corrupt state, or any other error anywhere below is swallowed by
 the top-level guard in `main()`'s caller and the process always exits 0 having printed nothing.
@@ -223,6 +228,8 @@ def main():
     # Loop guard -- ALWAYS first, unconditionally.
     if payload.get("stop_hook_active") is True:
         return
+    if payload.get("agent_id"):
+        return  # a delegated session cannot brief kb-scribe -- see the module docstring
 
     sid = payload.get("session_id")
     if not isinstance(sid, str) or not sid:

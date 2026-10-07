@@ -835,13 +835,20 @@ class PublishOutcome(HarvestTestCase):
         self.assertFalse(os.path.exists(self.state_file))
 
     def test_publish_topic_success_counts_without_a_rev(self):
-        # publish_topic's success envelope is `{slug, state, degree}` -- a real write with no
-        # revision number at all, so `rev` has to be optional-when-absent rather than required.
+        # publish_topic's success envelope is `{slug, state, degree, landed_in}` -- a real write
+        # with no revision number at all, so `rev` has to be optional-when-absent rather than
+        # required.
         proc = self.run_harvest(
             envelope(
                 "mcp__plugin_gitian-kb_gitian__publish_topic",
                 tool_response=self._nested(
-                    {"slug": "kb-discipline", "state": "organic", "degree": 4, "vocab_rev": 20}
+                    {
+                        "slug": "kb-discipline",
+                        "state": "organic",
+                        "degree": 4,
+                        "landed_in": "home",
+                        "vocab_rev": 20,
+                    }
                 ),
             )
         )

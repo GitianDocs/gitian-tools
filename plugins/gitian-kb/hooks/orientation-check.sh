@@ -3,15 +3,15 @@
 #
 # Registered (see hooks.json, owned by T12) on matcher "Edit|Write|NotebookEdit". Guards against
 # a session's first file mutation happening before any gitian KB read: if this session has zero
-# gitianReads recorded and the "orientation" flag hasn't fired yet, deny-once with an advisory
-# reason pointing at a kb-librarian dispatch (file_intents/search/neighbors) -- in-flight plans
-# elsewhere may already claim the paths about to be touched. A session that has done even one
+# gitianReads recorded and the "orientation" flag hasn't fired yet, it adds advice once, pointing
+# at a kb-librarian dispatch (file_intents/search/neighbors) -- in-flight plans elsewhere may
+# already claim the paths about to be touched. A session that has done even one
 # gitian read never sees this, from the very first mutation onward -- and a BACKGROUND librarian's
 # reads count, since harvest.py records a subagent's MCP traffic under the parent's session id.
 #
 # A write into Claude Code's EPHEMERAL state -- <config>/projects/ (agent memory, transcripts) and
 # <config>/plans/, where <config> is $CLAUDE_CONFIG_DIR or ~/.claude -- is exempt entirely: no
-# in-flight plan can claim such a path, so denying it taught agents that the nudge is noise. It
+# in-flight plan can claim such a path, so nudging it taught agents that the nudge is noise. It
 # neither fires the flag nor counts as an edit (the Stop publish-reminder counts edits, and a
 # memory write is not repo work either), so the first REAL mutation still gets the nudge. The list
 # is an allowlist on purpose: <config>/plugins, agents, skills and commands are AUTHORED source,
@@ -19,9 +19,20 @@
 # is resolved against the payload's cwd first; the match is lexical (no `..` resolution), which is
 # fine for an advisory nudge.
 #
+# It NEVER BLOCKS. The advice is PreToolUse `hookSpecificOutput.additionalContext` with no
+# `permissionDecision`, so the edit proceeds through the normal permission flow and the advice
+# lands beside its result (it is never `allow`, which would skip the user's permission prompts).
+# It used to deny the first mutation once and rely on an identical re-send, which is the same
+# "advisory check that blocks" failure the publish lint had. The mutation it fires on therefore
+# counts as an edit like any other.
+#
+# Inside a DELEGATED session (the payload carries `agent_id`, set only when a hook fires inside a
+# subagent) it stays silent: the advice is "dispatch kb-librarian", which a subagent has no tool
+# for. The edit is still counted, and the flag is left unspent for the primary.
+#
 # Fail-open on every path: bad/garbage/empty stdin, a missing session_id, a missing lib-state.sh,
 # or any state-substrate failure (corrupt/unwritable state file, missing python3) all fall through
-# to silence -- a denial is only ever emitted when gks_flag_once itself printed "fire".
+# to silence -- advice is only ever emitted when gks_flag_once itself printed "fire".
 set -u
 
 # shellcheck disable=SC1007 # "CDPATH= cd" is a deliberate prefix assignment, not a typo.
@@ -57,6 +68,18 @@ except Exception:
     pass
 ' 2>/dev/null)"
 [ -n "$cwd" ] || cwd="."
+
+# `agent_id` is present only inside a subagent (a delegated session) -- see the header.
+agent_id="$(printf '%s' "$hook_input" | python3 -c '
+import json, sys
+try:
+    obj = json.load(sys.stdin)
+    v = obj.get("agent_id") if isinstance(obj, dict) else None
+    if isinstance(v, str) and v:
+        sys.stdout.write(v)
+except Exception:
+    pass
+' 2>/dev/null)"
 
 # --- exempt: the target is Claude Code's own ephemeral state (memory, transcripts, plans) ------
 target="$(printf '%s' "$hook_input" | python3 -c '
@@ -94,7 +117,7 @@ case "$reads" in
   *[!0-9]*) reads=1 ;; # not a clean non-negative integer -- fail open, treat as already read
 esac
 
-if [ "$reads" = "0" ]; then
+if [ "$reads" = "0" ] && [ -z "$agent_id" ]; then
   fired="$(gks_flag_once "$sid" orientation)"
   if [ "$fired" = "fire" ]; then
     # --- repo: same owner/name normalization as session-context.sh -----------------------------
@@ -119,12 +142,12 @@ if [ "$reads" = "0" ]; then
       intents_clause="\`file_intents\`"
     fi
 
-    reason="gitian-kb orientation: this is your first file mutation this session with zero gitian KB reads so far. In-flight plans elsewhere may already claim these paths -- dispatch \`kb-librarian\` (background) for an orientation digest: ${intents_clause} plus \`search\`/\`neighbors\` for the task topic. This is advisory: re-sending the identical call will pass through untouched. Fires once per session."
+    advice="gitian-kb orientation (advisory -- the call was not blocked): this was the session's first file mutation with zero gitian KB reads so far. In-flight plans elsewhere may already claim these paths; a background \`kb-librarian\` dispatch for an orientation digest (${intents_clause} plus \`search\`/\`neighbors\` for the task topic) would show them before further edits. Fires once per session."
 
-    # JSON-escape the dynamic reason before interpolating into the literal template below.
-    reason_escaped="$(printf '%s' "$reason" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$reason_escaped"
-    exit 0
+    # JSON-escape the dynamic advice before interpolating into the literal template below. No
+    # permissionDecision: the edit is neither blocked nor pre-approved (see the header).
+    advice_escaped="$(printf '%s' "$advice" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$advice_escaped"
   fi
 fi
 
