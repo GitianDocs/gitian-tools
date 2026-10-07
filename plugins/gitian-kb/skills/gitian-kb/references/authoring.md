@@ -383,6 +383,16 @@ points at no code; a `patch_*` supplying it **replaces** the stored array wholes
 
 How to write one well:
 
+- **Paste, don't assemble.** With the code tools connected, every result that names a location
+  carries ready-made strings: `code_ref` (the whole link, following the branch you read: the default unless you passed `ref`), `code_ref_pinned`
+  (frozen at the commit read: for line ranges and "as of" claims) and `code_refs_entry` (the
+  `code_refs` object; it follows the branch, so set its `ref` to the result's `commit` to pin it).
+  `code_search` hits, `code_page` and `code_annotation` carry all three; `code_overview` carries the
+  first two (a repository alone is no entry). Paste one verbatim instead of typing the grammar. A
+  location the link grammar refuses (an odd path, an unaddressable id) carries none of them —
+  leave that reference out, a hand-written one would not parse either. A server older than these
+  fields carries none for any result: build it from the forms
+  above. Methods come back as `#Class.method` (`#Class::method` reads the same).
 - **Confirm before you write.** When the code tools are available (the gitian-docs plugin's
   `gitian-code` server: `code_search` to find a file or annotation, `code_page` for a file's outline
   and a bounded excerpt, `code_annotation` for one annotation by id), check that the path and symbol

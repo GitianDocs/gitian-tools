@@ -78,8 +78,12 @@ copying it, as `[[repo:owner/name[@ref]/path#Symbol|#Lx-Ly|#@annotation-id|label
 after the path (a symbol, a line range such as `#L10-L20`, or an annotation id as `#@<id>`), then an
 optional `|label` — or in the item's `code_refs` frontmatter. Take the anchor from `code_page`'s
 outline or from a `code_search` hit; an annotation `--id=` is the anchor that survives edits best,
-which is one more reason to keep ids stable. The authoring detail (pinning a ref, the warnings) is in
-the `gitian-kb` plugin's authoring reference.
+which is one more reason to keep ids stable. Better still, paste instead of assembling: a result that
+names a location returns a ready-made `code_ref` (the link), `code_ref_pinned` (frozen at the commit
+read) and `code_refs_entry` (the `code_refs` object; `code_overview` returns only the first two; none on any result means an older server, so write the
+link by hand; none on one result means that location cannot be linked, so leave it out).
+The
+authoring detail (pinning a ref, the warnings) is in the `gitian-kb` plugin's authoring reference.
 
 ## Guardrails
 

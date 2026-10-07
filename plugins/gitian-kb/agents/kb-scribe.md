@@ -254,9 +254,11 @@ gitian-instrumented repo an annotation id or doc path — instead of pasting it.
 
 **Code references.** Before you write a `[[repo:…]]` link or a `code_refs` entry, confirm the path
 or symbol exists with the code tools — `code_search`, then `code_page` for the outline — and never
-paste a whole file into a body (the syntax and pinning rules are in `references/authoring.md`).
-They belong to the gitian-docs plugin's `gitian-code` server, so load them with ToolSearch like the
-KB tools: `select:mcp__plugin_gitian-docs_gitian-code__code_search,mcp__plugin_gitian-docs_gitian-code__code_page`
+paste a whole file into a body (the syntax and pinning rules are in `references/authoring.md`);
+paste the `code_ref` / `code_ref_pinned` link or the `code_refs_entry` object those results carry
+instead of assembling the string (none of them on any result means an older server: write the link
+by hand; none on one result means that location cannot be linked: leave it out). They belong to the gitian-docs plugin's `gitian-code` server, so
+load them with ToolSearch like the KB tools: `select:mcp__plugin_gitian-docs_gitian-code__code_search,mcp__plugin_gitian-docs_gitian-code__code_page`
 (hand-wired: `mcp__gitian-code__code_*`). If ToolSearch finds none, write the reference unverified and
 say so in your report.
 
