@@ -9,21 +9,22 @@ that asks "does the name contain gitian" or "does it end in a read suffix" would
 lookup as a KB orientation read. The question every hook asks is therefore keyed to the SERVER
 SEGMENT of the tool name -- `mcp__<server>__<tool>` -- and only these two servers are the KB:
 
-  mcp__plugin_gitian-kb_gitian__<tool>   wired by the gitian-kb plugin (its .mcp.json key is `gitian`)
-  mcp__gitian__<tool>                    wired by hand under the name `gitian`
+  mcp__plugin_gitian-kb_gitian-kb__<tool>   wired by the gitian-kb plugin (.mcp.json key `gitian-kb`)
+  mcp__gitian-kb__<tool>                    wired by hand under the name `gitian-kb`
 
-The server segment is compared case-insensitively (a hand-wired `Gitian` is the same server); the
+The server segment is compared case-insensitively (a hand-wired `Gitian-KB` is the same server); the
 tool segment is returned exactly as given. hooks.json carries the same two spellings as a matcher
-(`mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__`) -- spelled with character classes because a
-regex matcher has no flag for case -- and this module is the precise check behind that pre-filter.
+(`mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]-[kK][bB]__`) -- spelled with character
+classes because a regex matcher has no flag for case -- and this module is the precise check
+behind that pre-filter. The server key was `gitian` before 0.28.0; that name is no longer the KB.
 
 Stdlib only; imported as a sibling module by the hook scripts that run from this directory.
 """
 
 # Lowercased: callers compare against name.lower(). The trailing "__" is what separates the server
-# segment from the tool, so `mcp__gitian-code__code_page` (server `gitian-code`) can never start
-# with `mcp__gitian__`.
-KB_SERVER_PREFIXES = ("mcp__plugin_gitian-kb_gitian__", "mcp__gitian__")
+# segment from the tool, so `mcp__gitian-kb-x__get` can never start with `mcp__gitian-kb__`, and
+# neither can the code server (`gitian-code`) or a server hand-wired under the old name `gitian`.
+KB_SERVER_PREFIXES = ("mcp__plugin_gitian-kb_gitian-kb__", "mcp__gitian-kb__")
 
 
 def kb_tool_name(tool_name):

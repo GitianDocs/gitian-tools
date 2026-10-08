@@ -3,7 +3,7 @@
 
 Invoked as a single python3 process (stdin passed straight through, unread by publish-lint.sh) by
 publish-lint.sh, itself registered as a PreToolUse hook matching
-"mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__(publish_doc|publish_memory|publish_entry|append_entry|patch_doc|patch_memory|batch_write)"
+"mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]-[kK][bB]__(publish_doc|publish_memory|publish_entry|append_entry|patch_doc|patch_memory|batch_write)"
 -- the KB server's namespace (kb_tool.py: both spellings, case-insensitive on the server segment),
 never the code server's -- the patch tools included, since a patch revises an item's frontmatter and its topic/mention lists
 are exactly what this lint is about, and batch_write, which carries up to 25 of those six writes
@@ -63,7 +63,7 @@ NEAR_MISS_MAX_DISTANCE = 2
 
 # The tools whose `topics`/`mentions` this lint reads when they ride inside a batch_write -- the
 # exact set the matcher above covers, by bare name (an operation names its tool without the
-# `mcp__..._gitian__` namespace). Any other tool name in an operation contributes nothing.
+# `mcp__..._gitian-kb__` namespace). Any other tool name in an operation contributes nothing.
 LINTED_BATCH_TOOLS = (
     "publish_doc",
     "publish_memory",

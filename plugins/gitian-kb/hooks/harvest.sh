@@ -2,7 +2,7 @@
 # harvest.sh -- PostToolUse hook for the gitian-kb plugin: passively harvest MCP traffic into the
 # shared nudge-layer state file (see state.py / lib-state.sh for the state contract).
 #
-# Registered with matcher "mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__.*|ReadMcpResourceTool" so it fires on every call of
+# Registered with matcher "mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]-[kK][bB]__.*|ReadMcpResourceTool" so it fires on every call of
 # the gitian KB server's tools and every resource read -- not the code server's -- but that matcher
 # is only a coarse pre-filter -- harvest.py re-checks tool_name/tool_input itself (kb_tool.py) and is
 # silent on anything that isn't actually a KB call. All JSON handling happens in one python3 invocation; this script never reads stdin itself

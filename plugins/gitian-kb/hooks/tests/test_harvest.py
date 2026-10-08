@@ -123,7 +123,7 @@ class GuardClause(HarvestTestCase):
         with open(self.state_file, "w", encoding="utf-8") as fh:
             fh.write("{not valid json ][ at all")
 
-        proc = self.run_harvest(envelope("mcp__plugin_gitian-kb_gitian__get", tool_input={"slug": "x"}))
+        proc = self.run_harvest(envelope("mcp__plugin_gitian-kb_gitian-kb__get", tool_input={"slug": "x"}))
         self.assert_silent(proc)
 
         state = self.dump_state()
@@ -135,7 +135,7 @@ class VocabRevCapture(HarvestTestCase):
     def test_captured_from_envelope_and_stored_on_server_and_session(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__get",
+                "mcp__plugin_gitian-kb_gitian-kb__get",
                 tool_input={"slug": "x"},
                 tool_response={"isError": False, "vocab_rev": 5, "slug": "x"},
             )
@@ -149,13 +149,13 @@ class VocabRevCapture(HarvestTestCase):
     def test_max_wins_on_regression(self):
         self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__get",
+                "mcp__plugin_gitian-kb_gitian-kb__get",
                 tool_response={"vocab_rev": 9},
             )
         )
         self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__get",
+                "mcp__plugin_gitian-kb_gitian-kb__get",
                 tool_response={"vocab_rev": 3},
             )
         )
@@ -167,7 +167,7 @@ class VocabRevCapture(HarvestTestCase):
     def test_multiple_occurrences_take_the_max(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__search",
+                "mcp__plugin_gitian-kb_gitian-kb__search",
                 tool_response={"vocab_rev": 2, "extra": {"vocab_rev": 7}},
             )
         )
@@ -238,11 +238,11 @@ class VocabTopicList(HarvestTestCase):
 
 class Reads(HarvestTestCase):
     def test_increments_on_get_and_search_but_not_on_publish(self):
-        self.run_harvest(envelope("mcp__plugin_gitian-kb_gitian__get", tool_response={"ok": True}))
-        self.run_harvest(envelope("mcp__plugin_gitian-kb_gitian__search", tool_response={"ok": True}))
+        self.run_harvest(envelope("mcp__plugin_gitian-kb_gitian-kb__get", tool_response={"ok": True}))
+        self.run_harvest(envelope("mcp__plugin_gitian-kb_gitian-kb__search", tool_response={"ok": True}))
         self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response={"isError": False, "slug": "new-doc"},
             )
         )
@@ -267,7 +267,7 @@ class Reads(HarvestTestCase):
         )
         for suffix in suffixes:
             proc = self.run_harvest(
-                envelope("mcp__plugin_gitian-kb_gitian__%s" % suffix, tool_response={"ok": True})
+                envelope("mcp__plugin_gitian-kb_gitian-kb__%s" % suffix, tool_response={"ok": True})
             )
             self.assert_silent(proc)
 
@@ -280,7 +280,7 @@ class Reads(HarvestTestCase):
         # vocabulary read is KB content, so the tool name alone must not earn the credit -- the
         # uri decides, which is what keeps a scribe's format-doc read from standing in for the
         # orientation sweep the parent's nudge is actually asking about.
-        name = "mcp__plugin_gitian-kb_gitian__read_resource"
+        name = "mcp__plugin_gitian-kb_gitian-kb__read_resource"
         self.assert_silent(
             self.run_harvest(
                 envelope(name, tool_input={"uri": "gitian-kb://format/doc"},
@@ -299,7 +299,7 @@ class Reads(HarvestTestCase):
 
     def test_non_read_non_publish_gitian_call_does_not_increment_reads(self):
         proc = self.run_harvest(
-            envelope("mcp__plugin_gitian-kb_gitian__retract_item", tool_response={"ok": True})
+            envelope("mcp__plugin_gitian-kb_gitian-kb__retract_item", tool_response={"ok": True})
         )
         self.assert_silent(proc)
         state = self.dump_state()
@@ -312,7 +312,7 @@ class Reads(HarvestTestCase):
         # it must not be miscounted as an orientation read (regression for the "topic" suffix
         # also matching publish_topic/retract_topic).
         proc = self.run_harvest(
-            envelope("mcp__plugin_gitian-kb_gitian__retract_topic", tool_response={"ok": True})
+            envelope("mcp__plugin_gitian-kb_gitian-kb__retract_topic", tool_response={"ok": True})
         )
         self.assert_silent(proc)
         self.assertFalse(os.path.exists(self.state_file))
@@ -322,7 +322,7 @@ class Reads(HarvestTestCase):
         # over the read-suffix match so it isn't double-counted as both a read and a publish.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_topic",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_topic",
                 tool_response={"isError": False, "slug": "new-topic"},
             )
         )
@@ -337,7 +337,7 @@ class PublishSuccess(HarvestTestCase):
     def test_updates_last_publish_at_and_slug_and_increments_publishes(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response={"isError": False, "slug": "onboarding-guide"},
             )
         )
@@ -353,7 +353,7 @@ class PublishSuccess(HarvestTestCase):
     def test_append_entry_also_sets_last_append_at(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__append_entry",
+                "mcp__plugin_gitian-kb_gitian-kb__append_entry",
                 tool_response={"isError": False, "slug": "journal-2026-07-18"},
             )
         )
@@ -368,7 +368,7 @@ class PublishSuccess(HarvestTestCase):
     def test_publish_entry_also_sets_last_append_at(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_entry",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_entry",
                 tool_response={"isError": False, "slug": "entry-1"},
             )
         )
@@ -379,7 +379,7 @@ class PublishSuccess(HarvestTestCase):
     def test_failed_publish_is_error_true_harvests_nothing(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response={"isError": True, "message": "boom"},
             )
         )
@@ -389,7 +389,7 @@ class PublishSuccess(HarvestTestCase):
     def test_failed_publish_validation_failed_harvests_nothing(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_memory",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_memory",
                 tool_response={"isError": False, "error": "validation_failed: missing summary"},
             )
         )
@@ -403,7 +403,7 @@ class PublishSuccess(HarvestTestCase):
         # failed publish just because that substring appears somewhere in the raw envelope.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__append_entry",
+                "mcp__plugin_gitian-kb_gitian-kb__append_entry",
                 tool_input={"body": "This entry documents how validation_failed errors are linted."},
                 tool_response={"isError": False, "slug": "journal-2026-07-18"},
             )
@@ -423,7 +423,7 @@ class PublishSuccess(HarvestTestCase):
         # -- e.g. a doc body embedding a worked example of a failing call.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"exampleBadCall": {"isError": True, "message": "boom"}},
                 tool_response={"isError": False, "slug": "linting-notes"},
             )
@@ -453,7 +453,7 @@ class NestedMcpEnvelope(HarvestTestCase):
     def test_vocab_rev_harvested_from_nested_publish_envelope(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=self._nested_response({"slug": "onboarding-guide", "vocab_rev": 19}),
             )
         )
@@ -483,7 +483,7 @@ class NestedMcpEnvelope(HarvestTestCase):
     def test_last_publish_slug_captured_from_nested_publish_success(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_memory",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_memory",
                 tool_response=self._nested_response({"slug": "nested-slug-fact"}),
             )
         )
@@ -497,7 +497,7 @@ class NestedMcpEnvelope(HarvestTestCase):
     def test_nested_validation_failed_harvests_no_publish_success(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=self._nested_response(
                     {"error": "validation_failed", "message": "bad input"}
                 ),
@@ -513,7 +513,7 @@ class NestedMcpEnvelope(HarvestTestCase):
         # escaped '\"isError\": true' text doesn't contain that literal substring).
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=self._nested_response(
                     {"error": "internal", "isError": True}, is_error=False
                 ),
@@ -532,7 +532,7 @@ class DelegatedWriteSurface(HarvestTestCase):
     def test_patch_doc_counts_as_a_publish(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__patch_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__patch_doc",
                 tool_input={"slug": "some-plan", "base_rev": 7},
                 tool_response={"isError": False, "slug": "some-plan"},
             )
@@ -553,7 +553,7 @@ class DelegatedWriteSurface(HarvestTestCase):
     def test_patch_memory_counts_as_a_publish(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__patch_memory",
+                "mcp__plugin_gitian-kb_gitian-kb__patch_memory",
                 tool_response={"isError": False, "slug": "a-memory"},
             )
         )
@@ -563,7 +563,7 @@ class DelegatedWriteSurface(HarvestTestCase):
     def test_failed_patch_harvests_nothing(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__patch_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__patch_doc",
                 tool_response={"isError": True, "error": "rev_conflict"},
             )
         )
@@ -574,7 +574,7 @@ class DelegatedWriteSurface(HarvestTestCase):
         topics = [{"slug": "auth", "description": "Auth flows", "degree": 3}]
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__read_resource",
+                "mcp__plugin_gitian-kb_gitian-kb__read_resource",
                 tool_input={"uri": "gitian-kb://vocab"},
                 tool_response={
                     "content": [{"type": "text", "text": json.dumps({"topics": topics, "vocab_rev": 51})}]
@@ -601,7 +601,7 @@ class DelegatedWriteSurface(HarvestTestCase):
         # closing a regression, not narrowing established behavior.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__read_resource",
+                "mcp__plugin_gitian-kb_gitian-kb__read_resource",
                 tool_input={"uri": "gitian-kb://format/doc"},
                 tool_response=self._resource_response(
                     "gitian-kb://format/doc", "text/markdown", "# Doc format", vocab_rev=12
@@ -634,7 +634,7 @@ class DelegatedWriteSurface(HarvestTestCase):
         topics = [{"slug": "auth", "description": "Auth flows", "degree": 3}]
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__read_resource",
+                "mcp__plugin_gitian-kb_gitian-kb__read_resource",
                 tool_input={"uri": "gitian-kb://vocab"},
                 tool_response=self._resource_response(
                     "gitian-kb://vocab",
@@ -660,7 +660,7 @@ class DelegatedWriteSurface(HarvestTestCase):
         ]
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__read_resource",
+                "mcp__plugin_gitian-kb_gitian-kb__read_resource",
                 tool_input={"uri": "gitian-kb://vocab"},
                 tool_response=self._resource_response(
                     "gitian-kb://vocab", "application/json", json.dumps({"topics": topics})
@@ -674,7 +674,7 @@ class DelegatedWriteSurface(HarvestTestCase):
     def test_read_resource_vocab_envelope_with_unparsable_nested_text_harvests_no_topics(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__read_resource",
+                "mcp__plugin_gitian-kb_gitian-kb__read_resource",
                 tool_input={"uri": "gitian-kb://vocab"},
                 tool_response=self._resource_response(
                     "gitian-kb://vocab", "application/json", "not json at all {"
@@ -713,7 +713,7 @@ class PublishOutcome(HarvestTestCase):
     def test_a_real_success_envelope_counts(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=self._nested(self._success_payload()),
             )
         )
@@ -728,7 +728,7 @@ class PublishOutcome(HarvestTestCase):
         # detection read it as a successful publish of that very slug.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__patch_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__patch_doc",
                 tool_input={"slug": "some-plan", "base_rev": 6},
                 tool_response=self._nested(
                     {
@@ -754,7 +754,7 @@ class PublishOutcome(HarvestTestCase):
         # outside this hook's control; the decoded `error` string is not.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=self._nested(
                     {"error": "rev_conflict", "slug": "some-plan", "head_rev": 8}, is_error=False
                 ),
@@ -766,7 +766,7 @@ class PublishOutcome(HarvestTestCase):
     def test_base_rev_required_does_not_count_as_a_publish(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=self._nested(
                     {
                         "error": "base_rev_required",
@@ -783,7 +783,7 @@ class PublishOutcome(HarvestTestCase):
     def test_edit_no_match_does_not_count_as_a_publish(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__patch_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__patch_doc",
                 tool_response=self._nested(
                     {"error": "edit_no_match", "slug": "some-plan", "message": "no match"},
                     is_error=True,
@@ -801,7 +801,7 @@ class PublishOutcome(HarvestTestCase):
         # still harvested; only the publish counter and the publish timestamps abstain.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=self._nested(self._success_payload(unchanged=True)),
             )
         )
@@ -818,7 +818,7 @@ class PublishOutcome(HarvestTestCase):
         # because the credit is what suppresses the reminder.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response={"content": [{"type": "text", "text": "server said something"}]},
             )
         )
@@ -828,7 +828,7 @@ class PublishOutcome(HarvestTestCase):
     def test_an_ok_false_envelope_is_a_failure(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=self._nested({"ok": False, "slug": "some-plan", "rev": 3}),
             )
         )
@@ -838,7 +838,7 @@ class PublishOutcome(HarvestTestCase):
     def test_a_non_numeric_rev_is_not_a_success_envelope(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=self._nested({"slug": "some-plan", "rev": "eight"}),
             )
         )
@@ -851,7 +851,7 @@ class PublishOutcome(HarvestTestCase):
         # required.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_topic",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_topic",
                 tool_response=self._nested(
                     {
                         "slug": "kb-discipline",
@@ -871,7 +871,7 @@ class PublishOutcome(HarvestTestCase):
     def test_append_entry_success_still_sets_last_append_at(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__append_entry",
+                "mcp__plugin_gitian-kb_gitian-kb__append_entry",
                 tool_response=self._nested(
                     {
                         "slug": "journal-2026-09-17",
@@ -927,7 +927,7 @@ class DefaultKbCache(HarvestTestCase):
         resource = {"uri": self.VOCAB_URI, "mimeType": "application/json", "text": json.dumps(doc)}
         return self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__read_resource",
+                "mcp__plugin_gitian-kb_gitian-kb__read_resource",
                 tool_input={"uri": self.VOCAB_URI},
                 tool_response=bare_list(resource),
                 session_id=session_id,
@@ -991,14 +991,14 @@ class DefaultKbCache(HarvestTestCase):
         # move the cache, and a non-vocab resource read must not clear it.
         self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__get",
+                "mcp__plugin_gitian-kb_gitian-kb__get",
                 tool_input={"slug": "x"},
                 tool_response=bare_list({"slug": "x", "vocab_rev": 3}),
             )
         )
         self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__read_resource",
+                "mcp__plugin_gitian-kb_gitian-kb__read_resource",
                 tool_input={"uri": "gitian-kb://format/doc"},
                 tool_response=bare_list(
                     {"uri": "gitian-kb://format/doc", "mimeType": "text/markdown", "text": "# Doc"}
@@ -1016,7 +1016,7 @@ class BatchAndCategoryWrites(HarvestTestCase):
     def test_a_batched_publish_topic_counts_as_one_publish(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_topic",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_topic",
                 tool_input={"topics": [{"slug": "zendesk", "description": "d"}]},
                 tool_response=bare_list(
                     {
@@ -1041,7 +1041,7 @@ class BatchAndCategoryWrites(HarvestTestCase):
     def test_a_batch_error_envelope_does_not_count(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_topic",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_topic",
                 tool_input={"topics": []},
                 tool_response=bare_list(
                     {"error": "validation_failed", "message": "publish_topic rejected"}
@@ -1055,7 +1055,7 @@ class BatchAndCategoryWrites(HarvestTestCase):
     def test_a_published_category_counts_as_a_write(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__gitian__publish_category",
+                "mcp__gitian-kb__publish_category",
                 tool_input={"slug": "billing", "name": "Billing", "prompt": "p"},
                 tool_response=bare_list(
                     {"slug": "billing", "name": "Billing", "created": True, "landed_in": "home"}
@@ -1070,7 +1070,7 @@ class BatchAndCategoryWrites(HarvestTestCase):
     def test_a_forbidden_category_write_does_not_count(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__gitian__publish_category",
+                "mcp__gitian-kb__publish_category",
                 tool_input={"slug": "billing", "name": "Billing", "prompt": "p", "kb": "acme/team"},
                 tool_response=bare_list(
                     {"error": "forbidden", "message": "only an org admin can change categories"}
@@ -1087,7 +1087,7 @@ class BatchWrite(HarvestTestCase):
     like a standalone write recorded NOTHING: a scribe that imported a corpus in one batch was told
     by the Stop reminder that the session had published nothing."""
 
-    TOOL = "mcp__plugin_gitian-kb_gitian__batch_write"
+    TOOL = "mcp__plugin_gitian-kb_gitian-kb__batch_write"
 
     @staticmethod
     def result(index, slug="a-memory", **extra):
@@ -1250,14 +1250,14 @@ class CodeServerIgnored(HarvestTestCase):
         )
         self.assertFalse(os.path.exists(self.state_file))
         self.run_harvest(
-            envelope("mcp__gitian__search", tool_input={"query": "x"}, tool_response=bare_list({}))
+            envelope("mcp__gitian-kb__search", tool_input={"query": "x"}, tool_response=bare_list({}))
         )
         self.assertEqual(self.dump_state()["sessions"]["sess-1"]["gitianReads"], 1)
 
     def test_a_code_call_leaves_the_kbs_cached_state_untouched(self):
         self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__get",
+                "mcp__plugin_gitian-kb_gitian-kb__get",
                 tool_input={"slug": "x"},
                 tool_response=bare_list({"slug": "x", "vocab_rev": 5}),
             )
@@ -1274,16 +1274,16 @@ class CodeServerIgnored(HarvestTestCase):
         self.assertEqual(self.dump_state(), before)
 
     def test_the_kb_server_segment_is_case_insensitive_and_exact(self):
-        for tool_name in ("mcp__Gitian__get", "mcp__GITIAN__get"):
+        for tool_name in ("mcp__Gitian-KB__get", "mcp__GITIAN-KB__get"):
             with self.subTest(tool_name=tool_name):
                 if os.path.exists(self.state_file):
                     os.remove(self.state_file)
                 self.run_harvest(envelope(tool_name, tool_input={"slug": "x"}, tool_response=bare_list({})))
                 self.assertEqual(self.dump_state()["sessions"]["sess-1"]["gitianReads"], 1)
-        # `gitian-kb` is not the server's segment: the plugin's key is `gitian`, not `gitian-kb`.
+        # `gitian` (the server key before 0.28.0) is not the server's segment any more.
         os.remove(self.state_file)
         self.run_harvest(
-            envelope("mcp__gitian-kb__get", tool_input={"slug": "x"}, tool_response=bare_list({}))
+            envelope("mcp__gitian__get", tool_input={"slug": "x"}, tool_response=bare_list({}))
         )
         self.assertFalse(os.path.exists(self.state_file))
 

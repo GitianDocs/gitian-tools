@@ -3,7 +3,7 @@
 
 Invoked as a single python3 process (stdin passed straight through, unread by routing-guard.sh) by
 routing-guard.sh, itself registered as a PreToolUse hook matching
-"mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__(publish_doc|publish_entry|append_entry|batch_write)" -- the three gitian
+"mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]-[kK][bB]__(publish_doc|publish_entry|append_entry|batch_write)" -- the three gitian
 KB write tools whose target KB is decided by ROUTING rather than by the caller, and batch_write,
 whose `operations[]` carry those same three tools. Only the KB server's namespace (kb_tool.py: both
 spellings, case-insensitive on the server segment): the code server's tools are read-only and are
@@ -85,7 +85,7 @@ import kb_tool
 ROUTED_WRITE_MARKERS = ("publish_doc", "publish_entry", "append_entry")
 
 # batch_write's operations name a tool by its bare name, so inside a batch the match is exact (the
-# substring match above exists for the namespaced `mcp__..._gitian__publish_doc` spelling).
+# substring match above exists for the namespaced `mcp__..._gitian-kb__publish_doc` spelling).
 BATCH_WRITE_MARKER = "batch_write"
 # Offending operations listed by index in a deny reason; the rest are counted, not enumerated.
 MAX_LISTED_OPERATIONS = 10

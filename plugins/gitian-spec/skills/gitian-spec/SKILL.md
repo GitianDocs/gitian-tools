@@ -32,7 +32,7 @@ re-emitting it on the orchestrating model is pure duplication. Your job is to sc
   memories, and the two subagents: `kb-librarian` (reads) and `kb-scribe` (every write).
 
 gitian-kb is a **required companion**: gitian-spec deliberately ships no MCP config of its own,
-so the `gitian` tools this skill authors through (`search`, `neighbors`, `get`, `history`,
+so the `gitian-kb` tools this skill authors through (`search`, `neighbors`, `get`, `history`,
 `file_intents`, `publish_doc`, `patch_doc`, `append_entry`, `publish_entry`) come from
 gitian-kb's single connection — if the tools are missing, install `gitian-kb@gitian-tools`.
 gitian-kb's publishing rules apply here unchanged and by reference: full-manifest publishes

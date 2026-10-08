@@ -129,7 +129,7 @@ class GuardClause(PublishLintTestCase):
 
     def test_missing_session_id_is_silent(self):
         payload = envelope(
-            "mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"topics": ["kb-disciplne"]}
+            "mcp__plugin_gitian-kb_gitian-kb__publish_doc", tool_input={"topics": ["kb-disciplne"]}
         )
         del payload["session_id"]
         proc = self.run_lint(payload)
@@ -144,7 +144,7 @@ class GuardClause(PublishLintTestCase):
 
         proc = self.run_lint(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"topics": ["kb-disciplne"]}
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc", tool_input={"topics": ["kb-disciplne"]}
             )
         )
         self.assert_silent(proc)
@@ -158,7 +158,7 @@ class NeverBlocks(PublishLintTestCase):
         self.seed_vocab(NEAR_MISS_VOCAB)
         proc = self.run_lint(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"topics": ["kb-disciplne"]},
             )
         )
@@ -178,7 +178,7 @@ class ServerDuplicatesRetired(PublishLintTestCase):
         for tool in ("publish_doc", "publish_memory", "publish_entry"):
             with self.subTest(tool=tool):
                 proc = self.run_lint(
-                    envelope("mcp__plugin_gitian-kb_gitian__%s" % tool, tool_input={"title": "x"})
+                    envelope("mcp__plugin_gitian-kb_gitian-kb__%s" % tool, tool_input={"title": "x"})
                 )
                 self.assert_silent(proc)
         self.assertFalse(os.path.exists(self.state_file) and self.dump_state().get("sessions"))
@@ -190,7 +190,7 @@ class ServerDuplicatesRetired(PublishLintTestCase):
         ):
             with self.subTest(tool_input=tool_input):
                 proc = self.run_lint(
-                    envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_input=tool_input)
+                    envelope("mcp__plugin_gitian-kb_gitian-kb__publish_doc", tool_input=tool_input)
                 )
                 self.assert_silent(proc)
 
@@ -200,7 +200,7 @@ class NearMissRule(PublishLintTestCase):
         self.seed_vocab(NEAR_MISS_VOCAB)
         proc = self.run_lint(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"topics": ["kb-disciplne"]},
             )
         )
@@ -212,7 +212,7 @@ class NearMissRule(PublishLintTestCase):
         self.seed_vocab(NEAR_MISS_VOCAB)
         proc = self.run_lint(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"topics": ["kb-discipline"], "mentions": ["kb-disciplne"]},
             )
         )
@@ -228,7 +228,7 @@ class NearMissRule(PublishLintTestCase):
                 self.seed_vocab(NEAR_MISS_VOCAB)
                 proc = self.run_lint(
                     envelope(
-                        "mcp__plugin_gitian-kb_gitian__%s" % tool,
+                        "mcp__plugin_gitian-kb_gitian-kb__%s" % tool,
                         tool_input={"slug": "x", "topics": ["kb-disciplne"]},
                     )
                 )
@@ -238,7 +238,7 @@ class NearMissRule(PublishLintTestCase):
         self.seed_vocab(NEAR_MISS_VOCAB)
         proc = self.run_lint(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"topics": ["kb-discipline"]},
             )
         )
@@ -247,7 +247,7 @@ class NearMissRule(PublishLintTestCase):
     def test_empty_cache_disables_the_check(self):
         proc = self.run_lint(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"topics": ["anything"]},
             )
         )
@@ -258,7 +258,7 @@ class NearMissRule(PublishLintTestCase):
         self.seed_vocab(NEAR_MISS_VOCAB)
         proc = self.run_lint(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"topics": ["completely-different-slug"]},
             )
         )
@@ -267,7 +267,7 @@ class NearMissRule(PublishLintTestCase):
     def test_fires_once_per_epoch_and_an_epoch_bump_rearms_it(self):
         self.seed_vocab(NEAR_MISS_VOCAB)
         payload = envelope(
-            "mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"topics": ["kb-disciplne"]}
+            "mcp__plugin_gitian-kb_gitian-kb__publish_doc", tool_input={"topics": ["kb-disciplne"]}
         )
         self.assert_advised(self.run_lint(payload))
 
@@ -276,7 +276,7 @@ class NearMissRule(PublishLintTestCase):
         self.assert_silent(
             self.run_lint(
                 envelope(
-                    "mcp__plugin_gitian-kb_gitian__publish_doc",
+                    "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                     tool_input={"topics": ["kb-disciplin"]},
                 )
             )
@@ -291,7 +291,7 @@ class NearMissRule(PublishLintTestCase):
         self.assert_advised(
             self.run_lint(
                 envelope(
-                    "mcp__plugin_gitian-kb_gitian__publish_doc",
+                    "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                     tool_input={"topics": ["kb-disciplne"]},
                 )
             )
@@ -299,7 +299,7 @@ class NearMissRule(PublishLintTestCase):
         self.assertEqual(self.dump_state()["sessions"]["sess-1"]["lintHashes"], [])
 
 
-BATCH_TOOL = "mcp__plugin_gitian-kb_gitian__batch_write"
+BATCH_TOOL = "mcp__plugin_gitian-kb_gitian-kb__batch_write"
 
 
 def batch_envelope(operations, tool_name=BATCH_TOOL):
@@ -371,7 +371,7 @@ class BatchWriteOperations(PublishLintTestCase):
         self.assert_silent(
             self.run_lint(
                 envelope(
-                    "mcp__plugin_gitian-kb_gitian__publish_doc",
+                    "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                     tool_input={"topics": ["kb-disciplne"]},
                 )
             )
@@ -403,7 +403,7 @@ class BatchWriteOperations(PublishLintTestCase):
                         op("retract_item", slug="x", topics=["kb-disciplne"]),
                         op("nonsense", topics=["kb-disciplne"]),
                         op("batch_write", topics=["kb-disciplne"]),
-                        op("mcp__gitian__publish_doc", topics=["kb-disciplne"]),
+                        op("mcp__gitian-kb__publish_doc", topics=["kb-disciplne"]),
                     ]
                 )
             )
@@ -439,7 +439,7 @@ class BatchWriteOperations(PublishLintTestCase):
         operations = [op("publish_doc", slug="a", topics=["kb-disciplne"])]
         self.assert_silent(self.run_lint(batch_envelope(operations, tool_name="mcp__other__batch_write")))
         self.assert_advised(
-            self.run_lint(batch_envelope(operations, tool_name="mcp__gitian__batch_write"))
+            self.run_lint(batch_envelope(operations, tool_name="mcp__gitian-kb__batch_write"))
         )
 
     def test_publish_category_alone_is_never_linted(self):
@@ -448,7 +448,7 @@ class BatchWriteOperations(PublishLintTestCase):
         self.assert_silent(
             self.run_lint(
                 envelope(
-                    "mcp__plugin_gitian-kb_gitian__publish_category",
+                    "mcp__plugin_gitian-kb_gitian-kb__publish_category",
                     tool_input={"slug": "kb-disciplne", "name": "n", "prompt": "p"},
                 )
             )
@@ -472,7 +472,7 @@ class CodeServerIgnored(PublishLintTestCase):
         self.assert_advised(
             self.run_lint(
                 envelope(
-                    "mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"topics": ["kb-disciplne"]}
+                    "mcp__plugin_gitian-kb_gitian-kb__publish_doc", tool_input={"topics": ["kb-disciplne"]}
                 )
             )
         )

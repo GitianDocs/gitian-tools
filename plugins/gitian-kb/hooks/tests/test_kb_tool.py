@@ -17,13 +17,13 @@ import kb_tool  # noqa: E402  (the module under test lives one directory up)
 
 class KbToolName(unittest.TestCase):
     def test_both_kb_spellings_resolve_to_the_bare_tool_name(self):
-        self.assertEqual(kb_tool.kb_tool_name("mcp__plugin_gitian-kb_gitian__publish_doc"), "publish_doc")
-        self.assertEqual(kb_tool.kb_tool_name("mcp__gitian__read_resource"), "read_resource")
+        self.assertEqual(kb_tool.kb_tool_name("mcp__plugin_gitian-kb_gitian-kb__publish_doc"), "publish_doc")
+        self.assertEqual(kb_tool.kb_tool_name("mcp__gitian-kb__read_resource"), "read_resource")
 
     def test_the_server_segment_is_case_insensitive_and_the_tool_segment_is_kept_as_given(self):
-        self.assertEqual(kb_tool.kb_tool_name("mcp__Gitian__search"), "search")
-        self.assertEqual(kb_tool.kb_tool_name("mcp__GITIAN__Search"), "Search")
-        self.assertEqual(kb_tool.kb_tool_name("MCP__plugin_Gitian-KB_gitian__get"), "get")
+        self.assertEqual(kb_tool.kb_tool_name("mcp__Gitian-KB__search"), "search")
+        self.assertEqual(kb_tool.kb_tool_name("mcp__GITIAN-KB__Search"), "Search")
+        self.assertEqual(kb_tool.kb_tool_name("MCP__plugin_Gitian-KB_Gitian-KB__get"), "get")
 
     def test_the_code_servers_tools_are_not_kb_tools_under_either_spelling(self):
         for name in (
@@ -42,15 +42,15 @@ class KbToolName(unittest.TestCase):
     def test_other_servers_and_non_strings_are_not_kb_tools(self):
         for name in (
             "mcp__other__publish_doc",
-            "mcp__gitian-kb__get",
-            "mcp__gitian__",
+            "mcp__gitian__get",  # the server key before 0.28.0 is not the KB any more
+            "mcp__gitian-kb__",
             "mcp__gitian",
             "gitian_publish_doc",
             "Bash",
             "",
             None,
             42,
-            ["mcp__gitian__get"],
+            ["mcp__gitian-kb__get"],
         ):
             with self.subTest(name=name):
                 self.assertFalse(kb_tool.is_kb_tool(name))

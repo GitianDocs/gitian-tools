@@ -154,7 +154,7 @@ def edit_line(name="Edit"):
     return _assistant_line([_tool_use(name, {"file_path": "/x", "old_string": "a", "new_string": "b"})])
 
 
-def publish_line(tool_name="mcp__plugin_gitian-kb_gitian__publish_doc"):
+def publish_line(tool_name="mcp__plugin_gitian-kb_gitian-kb__publish_doc"):
     return _assistant_line([_tool_use(tool_name, {"slug": "x"})])
 
 
@@ -292,7 +292,7 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
         search = self.run_hook(
             HARVEST_SH,
             harvest_envelope(
-                "mcp__plugin_gitian-kb_gitian__search",
+                "mcp__plugin_gitian-kb_gitian-kb__search",
                 tool_input={"query": "auth"},
                 tool_response={"ok": True, "results": []},
                 session_id=sid,
@@ -331,7 +331,7 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
         lint = self.run_hook(
             PUBLISH_LINT_SH,
             lint_envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"title": "Auth billing notes", "topics": ["auth", "billing"]},
                 session_id=sid,
             ),
@@ -342,7 +342,7 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
         publish = self.run_hook(
             HARVEST_SH,
             harvest_envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"title": "Auth billing notes", "topics": ["auth", "billing"]},
                 tool_response={"isError": False, "slug": "auth-billing-notes"},
                 session_id=sid,
@@ -354,7 +354,7 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
         append = self.run_hook(
             HARVEST_SH,
             harvest_envelope(
-                "mcp__plugin_gitian-kb_gitian__append_entry",
+                "mcp__plugin_gitian-kb_gitian-kb__append_entry",
                 tool_input={"slug": "journal-2026-07-18"},
                 tool_response={"isError": False, "slug": "journal-2026-07-18"},
                 session_id=sid,
@@ -398,7 +398,7 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
         search = self.run_hook(
             HARVEST_SH,
             harvest_envelope(
-                "mcp__plugin_gitian-kb_gitian__search",
+                "mcp__plugin_gitian-kb_gitian-kb__search",
                 tool_input={"query": "greenfield"},
                 tool_response={"ok": True, "results": []},
                 session_id=sid,
@@ -419,7 +419,7 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
         lint = self.run_hook(
             PUBLISH_LINT_SH,
             lint_envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"title": "Greenfield init", "topics": ["greenfield-init"]},
                 session_id=sid,
             ),
@@ -430,7 +430,7 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
         publish = self.run_hook(
             HARVEST_SH,
             harvest_envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_input={"title": "Greenfield init", "topics": ["greenfield-init"]},
                 tool_response={"isError": False, "slug": "greenfield-init-doc"},
                 session_id=sid,
@@ -442,7 +442,7 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
         append = self.run_hook(
             HARVEST_SH,
             harvest_envelope(
-                "mcp__plugin_gitian-kb_gitian__append_entry",
+                "mcp__plugin_gitian-kb_gitian-kb__append_entry",
                 tool_input={"slug": "journal-2026-07-18"},
                 tool_response={"isError": False, "slug": "journal-2026-07-18"},
                 session_id=sid,
@@ -488,7 +488,7 @@ class EveryNudgeFiresOnceThenRearmsOnEpochBump(InvariantTestCase):
             ]
         )
         near_miss_payload = lint_envelope(
-            "mcp__plugin_gitian-kb_gitian__publish_doc",
+            "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
             tool_input={"title": "y", "topics": ["kb-disciplne"]},
             session_id=sid,
         )
@@ -510,7 +510,7 @@ class EveryNudgeFiresOnceThenRearmsOnEpochBump(InvariantTestCase):
 
         # -- mint follow-up: fires once per new slug, repeat envelope silent ---------------------
         minted_payload = harvest_envelope(
-            "mcp__plugin_gitian-kb_gitian__publish_doc",
+            "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
             tool_response=minted_response(["auth-flow"]),
             session_id=sid,
         )
@@ -560,7 +560,7 @@ class FailOpenSweep(InvariantTestCase):
         corrupt/unwritable state substrate, not just exercise the early "not my call" guard."""
         if script_name == "harvest.sh":
             return harvest_envelope(
-                "mcp__plugin_gitian-kb_gitian__get",
+                "mcp__plugin_gitian-kb_gitian-kb__get",
                 tool_input={"slug": "x"},
                 tool_response={"ok": True},
                 session_id=sid,
@@ -569,7 +569,7 @@ class FailOpenSweep(InvariantTestCase):
             return orientation_envelope(session_id=sid)
         if script_name == "publish-lint.sh":
             return lint_envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc", tool_input={"title": "x"}, session_id=sid
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc", tool_input={"title": "x"}, session_id=sid
             )
         if script_name == "commit-nudge.sh":
             return commit_envelope("git commit -m 'x'", session_id=sid)

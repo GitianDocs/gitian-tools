@@ -25,7 +25,7 @@
         ]
       },
       {
-        "matcher": "mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__(publish_doc|publish_memory|publish_entry|append_entry|patch_doc|patch_memory|batch_write)",
+        "matcher": "mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]-[kK][bB]__(publish_doc|publish_memory|publish_entry|append_entry|patch_doc|patch_memory|batch_write)",
         "hooks": [
           {
             "type": "command",
@@ -35,7 +35,7 @@
         ]
       },
       {
-        "matcher": "mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__(publish_doc|publish_entry|append_entry|batch_write)",
+        "matcher": "mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]-[kK][bB]__(publish_doc|publish_entry|append_entry|batch_write)",
         "hooks": [
           {
             "type": "command",
@@ -47,7 +47,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__.*|ReadMcpResourceTool",
+        "matcher": "mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]-[kK][bB]__.*|ReadMcpResourceTool",
         "hooks": [
           {
             "type": "command",

@@ -112,7 +112,7 @@ class FiresOnNewSlugs(MintFollowupTestCase):
     def test_names_minted_slugs_and_records_state(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=minted_response(["auth-flow", "billing-edge"]),
             )
         )
@@ -130,7 +130,7 @@ class FiresOnNewSlugs(MintFollowupTestCase):
     def test_single_slug_message_is_singular(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__append_entry",
+                "mcp__plugin_gitian-kb_gitian-kb__append_entry",
                 tool_response=minted_response(["auth-flow"]),
             )
         )
@@ -142,7 +142,7 @@ class FiresOnNewSlugs(MintFollowupTestCase):
         # JSON member" description -- kept as a defensive fallback.
         response = {"isError": False, "organic_topics_minted": ["auth-flow", "billing-edge"]}
         proc = self.run_harvest(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_response=response)
+            envelope("mcp__plugin_gitian-kb_gitian-kb__publish_doc", tool_response=response)
         )
         context = self.additional_context(proc)
         self.assertIn("auth-flow", context)
@@ -154,7 +154,7 @@ class FiresOnNewSlugs(MintFollowupTestCase):
             "organic_topics_minted": [{"slug": "auth-flow"}, {"slug": "billing-edge"}],
         }
         proc = self.run_harvest(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_topic", tool_response=response)
+            envelope("mcp__plugin_gitian-kb_gitian-kb__publish_topic", tool_response=response)
         )
         context = self.additional_context(proc)
         self.assertIn("auth-flow", context)
@@ -189,7 +189,7 @@ class BatchedDescribeRequest(MintFollowupTestCase):
     def test_asks_for_one_batched_call_naming_every_new_stub(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_memory",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_memory",
                 tool_response=bare_list_response(self.minted_payload(["zendesk", "hubspot", "slack"])),
             )
         )
@@ -205,7 +205,7 @@ class BatchedDescribeRequest(MintFollowupTestCase):
     def test_a_single_stub_is_asked_about_in_the_singular(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_memory",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_memory",
                 tool_response=bare_list_response(self.minted_payload(["zendesk"])),
             )
         )
@@ -231,7 +231,7 @@ class BatchedDescribeRequest(MintFollowupTestCase):
         )
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_memory",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_memory",
                 tool_response=bare_list_response(payload),
             )
         )
@@ -257,7 +257,7 @@ class BatchedDescribeRequest(MintFollowupTestCase):
         }
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_memory",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_memory",
                 tool_response=bare_list_response(payload),
             )
         )
@@ -268,7 +268,7 @@ class BatchedDescribeRequest(MintFollowupTestCase):
         # Describing the stubs must not re-trigger the follow-up it answers.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_topic",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_topic",
                 tool_input={"topics": [{"slug": "zendesk", "description": "d"}]},
                 tool_response=bare_list_response(
                     {"topics": [{"slug": "zendesk", "state": "organic", "degree": 0}], "landed_in": "home"}
@@ -281,7 +281,7 @@ class BatchedDescribeRequest(MintFollowupTestCase):
 class RepeatSuppression(MintFollowupTestCase):
     def test_identical_second_envelope_is_silent(self):
         env = envelope(
-            "mcp__plugin_gitian-kb_gitian__publish_doc",
+            "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
             tool_response=minted_response(["auth-flow"]),
         )
         first = self.run_harvest(env)
@@ -297,7 +297,7 @@ class RepeatSuppression(MintFollowupTestCase):
     def test_new_slug_in_later_envelope_fires_again_naming_only_the_new_one(self):
         first = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=minted_response(["auth-flow", "billing-edge"]),
             )
         )
@@ -305,7 +305,7 @@ class RepeatSuppression(MintFollowupTestCase):
 
         second = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=minted_response(["auth-flow", "billing-edge", "kb-search"]),
             )
         )
@@ -323,13 +323,13 @@ class RepeatSuppression(MintFollowupTestCase):
     def test_every_slug_already_prompted_is_silent_even_with_a_reordered_list(self):
         self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=minted_response(["auth-flow", "billing-edge"]),
             )
         )
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=minted_response(["billing-edge", "auth-flow"]),
             )
         )
@@ -338,7 +338,7 @@ class RepeatSuppression(MintFollowupTestCase):
     def test_separate_sessions_are_independent(self):
         first = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=minted_response(["auth-flow"]),
                 session_id="sess-a",
             )
@@ -347,7 +347,7 @@ class RepeatSuppression(MintFollowupTestCase):
 
         second = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response=minted_response(["auth-flow"]),
                 session_id="sess-b",
             )
@@ -361,7 +361,7 @@ class NoWarningIsSilent(MintFollowupTestCase):
     def test_envelope_without_the_warning_stays_silent(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response={"isError": False, "slug": "new-doc"},
             )
         )
@@ -388,7 +388,7 @@ class GarbageExtractsNothing(MintFollowupTestCase):
     def test_scalar_value_under_the_literal_member_extracts_nothing(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response={"isError": False, "organic_topics_minted": "not-a-list-or-dict"},
             )
         )
@@ -397,7 +397,7 @@ class GarbageExtractsNothing(MintFollowupTestCase):
     def test_unrecognized_nested_shape_under_the_literal_member_extracts_nothing(self):
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response={
                     "isError": False,
                     "organic_topics_minted": {"unexpected": {"deeply": "nested"}, "slug": 123},
@@ -412,7 +412,7 @@ class GarbageExtractsNothing(MintFollowupTestCase):
             "warnings": [{"code": "organic_topics_minted", "path": "topics", "note": None}],
         }
         proc = self.run_harvest(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_response=response)
+            envelope("mcp__plugin_gitian-kb_gitian-kb__publish_doc", tool_response=response)
         )
         self.assert_silent(proc)
 
@@ -428,7 +428,7 @@ class GarbageExtractsNothing(MintFollowupTestCase):
             ],
         }
         proc = self.run_harvest(
-            envelope("mcp__plugin_gitian-kb_gitian__publish_doc", tool_response=response)
+            envelope("mcp__plugin_gitian-kb_gitian-kb__publish_doc", tool_response=response)
         )
         self.assert_silent(proc)
 
@@ -438,7 +438,7 @@ class GarbageExtractsNothing(MintFollowupTestCase):
         # structured search must come up empty rather than false-positive on stray prose.
         proc = self.run_harvest(
             envelope(
-                "mcp__plugin_gitian-kb_gitian__publish_doc",
+                "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
                 tool_response={
                     "isError": False,
                     "message": "no organic_topics_minted warning this time",
@@ -449,7 +449,7 @@ class GarbageExtractsNothing(MintFollowupTestCase):
 
     def test_malformed_whole_envelope_is_silent(self):
         proc = self.run_harvest(
-            '{"tool_name": "mcp__plugin_gitian-kb_gitian__get", organic_topics_minted BROKEN'
+            '{"tool_name": "mcp__plugin_gitian-kb_gitian-kb__get", organic_topics_minted BROKEN'
         )
         self.assert_silent(proc)
         self.assertFalse(os.path.exists(self.state_file))

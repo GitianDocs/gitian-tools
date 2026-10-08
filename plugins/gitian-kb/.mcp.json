@@ -1,5 +1,5 @@
 {
-  "gitian": {
+  "gitian-kb": {
     "type": "http",
     "url": "${GITIAN_KB_URL:-https://gitian.dev}/api/mcp/kb"
   }

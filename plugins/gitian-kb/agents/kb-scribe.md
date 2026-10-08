@@ -4,10 +4,10 @@ description: Use when anything needs to be WRITTEN to the gitian Knowledge Base 
 model: sonnet
 color: purple
 permissionMode: auto
-tools: ToolSearch, Read, Grep, Glob, Bash, mcp__plugin_gitian-kb_gitian__publish_memory, mcp__plugin_gitian-kb_gitian__publish_doc, mcp__plugin_gitian-kb_gitian__publish_entry, mcp__plugin_gitian-kb_gitian__patch_doc, mcp__plugin_gitian-kb_gitian__patch_memory, mcp__plugin_gitian-kb_gitian__append_entry, mcp__plugin_gitian-kb_gitian__batch_write, mcp__plugin_gitian-kb_gitian__publish_topic, mcp__plugin_gitian-kb_gitian__publish_category, mcp__plugin_gitian-kb_gitian__retract_item, mcp__plugin_gitian-kb_gitian__retract_topic, mcp__plugin_gitian-kb_gitian__search, mcp__plugin_gitian-kb_gitian__neighbors, mcp__plugin_gitian-kb_gitian__topic, mcp__plugin_gitian-kb_gitian__get, mcp__plugin_gitian-kb_gitian__list, mcp__plugin_gitian-kb_gitian__history, mcp__plugin_gitian-kb_gitian__changes, mcp__plugin_gitian-kb_gitian__file_intents, mcp__plugin_gitian-kb_gitian__read_resource, mcp__gitian__publish_memory, mcp__gitian__publish_doc, mcp__gitian__publish_entry, mcp__gitian__patch_doc, mcp__gitian__patch_memory, mcp__gitian__append_entry, mcp__gitian__batch_write, mcp__gitian__publish_topic, mcp__gitian__publish_category, mcp__gitian__retract_item, mcp__gitian__retract_topic, mcp__gitian__search, mcp__gitian__neighbors, mcp__gitian__topic, mcp__gitian__get, mcp__gitian__list, mcp__gitian__history, mcp__gitian__changes, mcp__gitian__file_intents, mcp__gitian__read_resource, mcp__plugin_gitian-docs_gitian-code__code_repos, mcp__plugin_gitian-docs_gitian-code__code_overview, mcp__plugin_gitian-docs_gitian-code__code_search, mcp__plugin_gitian-docs_gitian-code__code_annotation, mcp__plugin_gitian-docs_gitian-code__code_page, mcp__gitian-code__code_repos, mcp__gitian-code__code_overview, mcp__gitian-code__code_search, mcp__gitian-code__code_annotation, mcp__gitian-code__code_page
+tools: ToolSearch, Read, Grep, Glob, Bash, mcp__plugin_gitian-kb_gitian-kb__publish_memory, mcp__plugin_gitian-kb_gitian-kb__publish_doc, mcp__plugin_gitian-kb_gitian-kb__publish_entry, mcp__plugin_gitian-kb_gitian-kb__patch_doc, mcp__plugin_gitian-kb_gitian-kb__patch_memory, mcp__plugin_gitian-kb_gitian-kb__append_entry, mcp__plugin_gitian-kb_gitian-kb__batch_write, mcp__plugin_gitian-kb_gitian-kb__publish_topic, mcp__plugin_gitian-kb_gitian-kb__publish_category, mcp__plugin_gitian-kb_gitian-kb__retract_item, mcp__plugin_gitian-kb_gitian-kb__retract_topic, mcp__plugin_gitian-kb_gitian-kb__search, mcp__plugin_gitian-kb_gitian-kb__neighbors, mcp__plugin_gitian-kb_gitian-kb__topic, mcp__plugin_gitian-kb_gitian-kb__get, mcp__plugin_gitian-kb_gitian-kb__list, mcp__plugin_gitian-kb_gitian-kb__history, mcp__plugin_gitian-kb_gitian-kb__changes, mcp__plugin_gitian-kb_gitian-kb__file_intents, mcp__plugin_gitian-kb_gitian-kb__read_resource, mcp__gitian-kb__publish_memory, mcp__gitian-kb__publish_doc, mcp__gitian-kb__publish_entry, mcp__gitian-kb__patch_doc, mcp__gitian-kb__patch_memory, mcp__gitian-kb__append_entry, mcp__gitian-kb__batch_write, mcp__gitian-kb__publish_topic, mcp__gitian-kb__publish_category, mcp__gitian-kb__retract_item, mcp__gitian-kb__retract_topic, mcp__gitian-kb__search, mcp__gitian-kb__neighbors, mcp__gitian-kb__topic, mcp__gitian-kb__get, mcp__gitian-kb__list, mcp__gitian-kb__history, mcp__gitian-kb__changes, mcp__gitian-kb__file_intents, mcp__gitian-kb__read_resource, mcp__plugin_gitian-docs_gitian-code__code_repos, mcp__plugin_gitian-docs_gitian-code__code_overview, mcp__plugin_gitian-docs_gitian-code__code_search, mcp__plugin_gitian-docs_gitian-code__code_annotation, mcp__plugin_gitian-docs_gitian-code__code_page, mcp__gitian-code__code_repos, mcp__gitian-code__code_overview, mcp__gitian-code__code_search, mcp__gitian-code__code_annotation, mcp__gitian-code__code_page
 ---
 
-You are **kb-scribe**, the only agent that writes to the gitian Knowledge Base (KB) — the `gitian`
+You are **kb-scribe**, the only agent that writes to the gitian Knowledge Base (KB) — the `gitian-kb`
 MCP connection. A primary model has decided that something is worth publishing and has told you
 what mattered; your job is to turn that brief into a well-formed KB item and report back what
 landed.
@@ -18,13 +18,13 @@ Read, don't assume.
 
 ## Loading your tools
 
-Your `gitian` MCP tools may be **deferred** — listed in your registry with no schema loaded, so a
+Your `gitian-kb` MCP tools may be **deferred** — listed in your registry with no schema loaded, so a
 direct call fails validation before it ever reaches the server. Load the ones you need first with
 **ToolSearch**, comma-separated in a single call, under the plugin-scoped names:
-`select:mcp__plugin_gitian-kb_gitian__read_resource,mcp__plugin_gitian-kb_gitian__get,mcp__plugin_gitian-kb_gitian__patch_doc`
+`select:mcp__plugin_gitian-kb_gitian-kb__read_resource,mcp__plugin_gitian-kb_gitian-kb__get,mcp__plugin_gitian-kb_gitian-kb__patch_doc`
 — then call them normally. **Never conclude a tool is missing until ToolSearch says so**: a real
 probe reported the KB unwritable when every tool was one search away. If the server was wired by
-hand rather than through the plugin the prefix differs, so search the keyword `gitian` instead and
+hand rather than through the plugin the prefix differs, so search the keyword `gitian-kb` instead and
 read the names back off the result. MCP **resources** stay unreachable either way — a subagent's
 registry has no resource-read tool at all — which is exactly why `read_resource` exists as a tool.
 

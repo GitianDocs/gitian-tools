@@ -49,7 +49,7 @@ def bash_line(command):
     return _assistant_line([_tool_use("Bash", {"command": command, "description": "run"})])
 
 
-def publish_line(tool_name="mcp__plugin_gitian-kb_gitian__publish_doc"):
+def publish_line(tool_name="mcp__plugin_gitian-kb_gitian-kb__publish_doc"):
     return _assistant_line([_tool_use(tool_name, {"slug": "x"})])
 
 
@@ -237,7 +237,7 @@ class PublishSuppression(PublishReminderTestCase):
 
     def test_append_entry_publish_also_suppresses(self):
         transcript = self.write_transcript(
-            [bash_line("git commit -m 'wip'"), publish_line("mcp__plugin_gitian-kb_gitian__append_entry")]
+            [bash_line("git commit -m 'wip'"), publish_line("mcp__plugin_gitian-kb_gitian-kb__append_entry")]
         )
         proc = self.run_hook(self.envelope(transcript_path=transcript))
         self.assert_silent(proc)
@@ -246,7 +246,7 @@ class PublishSuppression(PublishReminderTestCase):
         # A revision IS recording the work ([[kb-scribe-delegation]] made patch_doc/body_edits
         # the scribe's normal path), so a session that patched has published something.
         transcript = self.write_transcript(
-            [edit_line()] * 3 + [publish_line("mcp__plugin_gitian-kb_gitian__patch_doc")]
+            [edit_line()] * 3 + [publish_line("mcp__plugin_gitian-kb_gitian-kb__patch_doc")]
         )
         proc = self.run_hook(self.envelope(transcript_path=transcript))
         self.assert_silent(proc)
@@ -256,7 +256,7 @@ class PublishSuppression(PublishReminderTestCase):
         # A scribe that imported through one batch_write has published as much as one that made N
         # calls; the Stop reminder must not tell that session it published nothing.
         transcript = self.write_transcript(
-            [edit_line()] * 3 + [publish_line("mcp__plugin_gitian-kb_gitian__batch_write")]
+            [edit_line()] * 3 + [publish_line("mcp__plugin_gitian-kb_gitian-kb__batch_write")]
         )
         proc = self.run_hook(self.envelope(transcript_path=transcript))
         self.assert_silent(proc)

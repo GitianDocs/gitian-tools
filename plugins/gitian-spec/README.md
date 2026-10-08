@@ -17,7 +17,7 @@ claude plugin install gitian-spec@gitian-tools
 
 ## Requires gitian-kb
 
-This plugin deliberately ships **no MCP server config**. The `gitian` tools it authors through
+This plugin deliberately ships **no MCP server config**. The `gitian-kb` tools it authors through
 (`search`, `neighbors`, `get`, `history`, `file_intents`, `publish_doc`, `publish_entry`) come from the gitian-kb
 plugin's single connection — so installing both never double-connects the same server, and schema
 authority, OAuth, and the publishing rules live in exactly one place. Without gitian-kb the

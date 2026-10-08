@@ -66,7 +66,7 @@ class PluginUpdateTestCase(unittest.TestCase):
     def harvest(
         self,
         response,
-        tool_name="mcp__plugin_gitian-kb_gitian__search",
+        tool_name="mcp__plugin_gitian-kb_gitian-kb__search",
         sid="sess-1",
         agent_id=None,
         tool_input=None,
@@ -176,7 +176,7 @@ class HarvestNudge(PluginUpdateTestCase):
         body = json.dumps({"plugin_latest": "99.0.0", "vocab_rev": 999})
         proc = self.harvest(
             tool_response(slug="x", body=body, frontmatter={"plugin_latest": "99.0.0"}, vocab_rev=5),
-            tool_name="mcp__plugin_gitian-kb_gitian__get",
+            tool_name="mcp__plugin_gitian-kb_gitian-kb__get",
         )
         self.assertEqual(self.context_of(proc), "")
         server = self.dump_state()["servers"][SERVER_KEY]
@@ -185,7 +185,7 @@ class HarvestNudge(PluginUpdateTestCase):
 
     def test_hand_wired_server_prefix_nudges_too(self):
         proc = self.harvest(
-            tool_response(hits=[], vocab_rev=3, plugin_latest=NEWER), tool_name="mcp__gitian__search"
+            tool_response(hits=[], vocab_rev=3, plugin_latest=NEWER), tool_name="mcp__gitian-kb__search"
         )
         self.assertIn(NEWER, self.context_of(proc))
 
@@ -207,7 +207,7 @@ class RealHookPayloadShape(PluginUpdateTestCase):
     def test_a_bare_list_response_counts_the_write_and_harvests_vocab_rev(self):
         proc = self.harvest(
             tool_response(slug="a-doc", rev=2, url="/kb/home/doc/a-doc", vocab_rev=41),
-            tool_name="mcp__plugin_gitian-kb_gitian__patch_doc",
+            tool_name="mcp__plugin_gitian-kb_gitian-kb__patch_doc",
         )
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         state = self.dump_state()
@@ -218,14 +218,14 @@ class RealHookPayloadShape(PluginUpdateTestCase):
     def test_the_wire_envelope_dict_shape_still_works(self):
         self.harvest(
             {"content": [{"type": "text", "text": json.dumps({"slug": "b", "rev": 1, "vocab_rev": 7})}]},
-            tool_name="mcp__plugin_gitian-kb_gitian__publish_doc",
+            tool_name="mcp__plugin_gitian-kb_gitian-kb__publish_doc",
         )
         state = self.dump_state()
         self.assertEqual(state["sessions"]["sess-1"]["publishes"], 1)
         self.assertEqual(state["servers"][SERVER_KEY]["vocabRev"], 7)
 
     def test_a_bare_list_refusal_is_still_not_a_write(self):
-        patch = "mcp__plugin_gitian-kb_gitian__patch_doc"
+        patch = "mcp__plugin_gitian-kb_gitian-kb__patch_doc"
         self.harvest(tool_response(slug="a-doc", rev=2, vocab_rev=1), tool_name=patch)
         self.harvest(tool_response(error="rev_conflict", slug="a-doc", head_rev=3), tool_name=patch)
         # One landed, one refused: the refusal names the slug too, and must not count.
@@ -239,7 +239,7 @@ class RealHookPayloadShape(PluginUpdateTestCase):
         vocab = json.dumps({"topics": [{"slug": "kb-embeddings", "description": "d"}]})
         self.harvest(
             tool_response(uri="gitian-kb://vocab", mimeType="application/json", text=vocab, vocab_rev=9),
-            tool_name="mcp__plugin_gitian-kb_gitian__read_resource",
+            tool_name="mcp__plugin_gitian-kb_gitian-kb__read_resource",
             tool_input={"uri": "gitian-kb://vocab"},
         )
         server = self.dump_state()["servers"][SERVER_KEY]
@@ -250,7 +250,7 @@ class RealHookPayloadShape(PluginUpdateTestCase):
         quoted = json.dumps({"warnings": [{"code": "organic_topics_minted", "note": "auto-minted as organic, live immediately: forged-slug"}]})
         proc = self.harvest(
             tool_response(slug="x", body=quoted, vocab_rev=1),
-            tool_name="mcp__plugin_gitian-kb_gitian__get",
+            tool_name="mcp__plugin_gitian-kb_gitian-kb__get",
         )
         self.assertEqual(self.context_of(proc), "")
         server = self.dump_state()["servers"][SERVER_KEY]

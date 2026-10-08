@@ -3,7 +3,7 @@
 routing-precondition guard.
 
 Drives it end to end via `sh routing-guard.sh` (matching how hooks.json invokes it, on matcher
-"mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__(publish_doc|publish_entry|append_entry|batch_write)").
+"mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]-[kK][bB]__(publish_doc|publish_entry|append_entry|batch_write)").
 The guard keeps no state of its own and reads
 exactly one field of the nudge layer's -- the cached connection default -- so every test points
 GITIAN_KB_STATE_FILE at a throwaway path, and a real throwaway git repo is created per test that
@@ -36,8 +36,8 @@ CODE_TOOLS = ("code_repos", "code_overview", "code_search", "code_annotation", "
 CODE_PREFIXES = ("mcp__plugin_gitian-docs_gitian-code__", "mcp__gitian-code__")
 CODE_TOOL_NAMES = tuple(prefix + tool for prefix in CODE_PREFIXES for tool in CODE_TOOLS)
 
-GITIAN_TOOL = "mcp__plugin_gitian-kb_gitian__append_entry"
-BATCH_TOOL = "mcp__plugin_gitian-kb_gitian__batch_write"
+GITIAN_TOOL = "mcp__plugin_gitian-kb_gitian-kb__append_entry"
+BATCH_TOOL = "mcp__plugin_gitian-kb_gitian-kb__batch_write"
 
 
 def envelope(tool_name=GITIAN_TOOL, tool_input=None, cwd="/tmp", session_id="sess-1"):
@@ -138,10 +138,10 @@ class DeniesUnroutableWrite(RoutingGuardTestCase):
     def test_denies_for_each_routed_write_tool(self):
         repo_dir = self.make_repo("git@github.com:acme/widgets.git")
         for tool in (
-            "mcp__plugin_gitian-kb_gitian__publish_doc",
-            "mcp__plugin_gitian-kb_gitian__publish_entry",
-            "mcp__plugin_gitian-kb_gitian__append_entry",
-            "mcp__gitian__append_entry",  # the other server alias shape hooks already handle
+            "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
+            "mcp__plugin_gitian-kb_gitian-kb__publish_entry",
+            "mcp__plugin_gitian-kb_gitian-kb__append_entry",
+            "mcp__gitian-kb__append_entry",  # the other server alias shape hooks already handle
         ):
             self.assert_deny(self.run_hook(envelope(tool_name=tool, cwd=repo_dir)))
 
@@ -200,13 +200,13 @@ class AllowsEverythingElse(RoutingGuardTestCase):
     def test_never_routed_tools_are_never_denied(self):
         repo_dir = self.make_repo("git@github.com:acme/widgets.git")
         for tool in (
-            "mcp__plugin_gitian-kb_gitian__publish_memory",
-            "mcp__plugin_gitian-kb_gitian__patch_doc",
-            "mcp__plugin_gitian-kb_gitian__patch_memory",
-            "mcp__plugin_gitian-kb_gitian__retract_item",
-            "mcp__plugin_gitian-kb_gitian__publish_topic",
-            "mcp__plugin_gitian-kb_gitian__retract_topic",
-            "mcp__plugin_gitian-kb_gitian__search",
+            "mcp__plugin_gitian-kb_gitian-kb__publish_memory",
+            "mcp__plugin_gitian-kb_gitian-kb__patch_doc",
+            "mcp__plugin_gitian-kb_gitian-kb__patch_memory",
+            "mcp__plugin_gitian-kb_gitian-kb__retract_item",
+            "mcp__plugin_gitian-kb_gitian-kb__publish_topic",
+            "mcp__plugin_gitian-kb_gitian-kb__retract_topic",
+            "mcp__plugin_gitian-kb_gitian-kb__search",
         ):
             self.assert_allow(self.run_hook(envelope(tool_name=tool, cwd=repo_dir)))
 
@@ -307,10 +307,10 @@ class ConnectionDefaultStandsTheGuardDown(RoutingGuardTestCase):
     def test_allows_a_kb_less_repo_less_write_when_the_default_was_chosen(self):
         self.cache_default_kb({"kb": "support", "source": "connection"})
         for tool in (
-            "mcp__plugin_gitian-kb_gitian__publish_doc",
-            "mcp__plugin_gitian-kb_gitian__publish_entry",
-            "mcp__plugin_gitian-kb_gitian__append_entry",
-            "mcp__gitian__append_entry",
+            "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
+            "mcp__plugin_gitian-kb_gitian-kb__publish_entry",
+            "mcp__plugin_gitian-kb_gitian-kb__append_entry",
+            "mcp__gitian-kb__append_entry",
         ):
             self.assert_allow(self.run_hook(envelope(tool_name=tool, cwd=self.repo_dir)))
 
@@ -381,7 +381,7 @@ class ConnectionDefaultStandsTheGuardDown(RoutingGuardTestCase):
             "session_id": "sess-1",
             "cwd": "/repo",
             "hook_event_name": "PostToolUse",
-            "tool_name": "mcp__plugin_gitian-kb_gitian__read_resource",
+            "tool_name": "mcp__plugin_gitian-kb_gitian-kb__read_resource",
             "tool_input": {"uri": "gitian-kb://vocab"},
             "tool_response": [{"type": "text", "text": json.dumps(resource)}],
         }
@@ -432,11 +432,11 @@ class BatchWriteOperations(RoutingGuardTestCase):
             self.assertTrue(
                 re.search(matchers[script], BATCH_TOOL), msg="%s matcher misses batch_write" % script
             )
-            self.assertTrue(re.search(matchers[script], "mcp__gitian__batch_write"))
+            self.assertTrue(re.search(matchers[script], "mcp__gitian-kb__batch_write"))
         # A category carries no topics and no routing, so neither script matches it.
         for script in ("routing-guard.sh", "publish-lint.sh"):
             self.assertFalse(
-                re.search(matchers[script], "mcp__plugin_gitian-kb_gitian__publish_category")
+                re.search(matchers[script], "mcp__plugin_gitian-kb_gitian-kb__publish_category")
             )
 
     def test_denies_naming_the_offending_operation_index_and_its_tool(self):
@@ -475,7 +475,7 @@ class BatchWriteOperations(RoutingGuardTestCase):
 
     def test_denies_under_both_server_spellings_and_deterministically(self):
         operations = [op("publish_doc", slug="a")]
-        for tool_name in (BATCH_TOOL, "mcp__gitian__batch_write"):
+        for tool_name in (BATCH_TOOL, "mcp__gitian-kb__batch_write"):
             for _ in range(2):
                 self.assert_deny(self.run_batch(operations, tool_name=tool_name))
 
@@ -505,7 +505,7 @@ class BatchWriteOperations(RoutingGuardTestCase):
                     op("patch_memory", slug="m", summary="s"),
                     op("retract_item", slug="x"),
                     op("batch_write", operations=[]),
-                    op("mcp__gitian__publish_doc", slug="namespaced"),
+                    op("mcp__gitian-kb__publish_doc", slug="namespaced"),
                     op("nonsense"),
                 ]
             )
@@ -625,9 +625,9 @@ class CodeServerIgnored(RoutingGuardTestCase):
                     )
         # Control: the same tool on the KB server, either spelling, is denied.
         for tool_name in (
-            "mcp__plugin_gitian-kb_gitian__append_entry",
-            "mcp__gitian__append_entry",
-            "mcp__Gitian__append_entry",  # the server segment is case-insensitive
+            "mcp__plugin_gitian-kb_gitian-kb__append_entry",
+            "mcp__gitian-kb__append_entry",
+            "mcp__Gitian-KB__append_entry",  # the server segment is case-insensitive
         ):
             with self.subTest(tool_name=tool_name):
                 self.assert_deny(self.run_hook(envelope(tool_name=tool_name, cwd=self.repo_dir)))

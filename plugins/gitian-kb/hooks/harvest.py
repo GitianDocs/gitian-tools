@@ -3,7 +3,7 @@
 
 Invoked as a single python3 process (stdin passed straight through, unread by harvest.sh) by
 harvest.sh, itself registered as a PostToolUse hook matching the KB server's tool namespace
-(`mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]__.*`, see kb_tool.py) or ReadMcpResourceTool --
+(`mcp__(plugin_gitian-kb_)?[gG][iI][tT][iI][aA][nN]-[kK][bB]__.*`, see kb_tool.py) or ReadMcpResourceTool --
 never the code server's tools, whose names a looser pattern would also catch.
 Passively mines every gitian MCP call for state worth remembering across turns/sessions: the
 server's vocab revision, a cached snapshot of its topic list, discipline counters (gitianReads,
