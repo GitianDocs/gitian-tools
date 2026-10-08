@@ -671,6 +671,43 @@ class DelegatedWriteSurface(HarvestTestCase):
         server = self.dump_state()["servers"][SERVER_KEY]
         self.assertEqual(server["undescribedTopics"], ["stub-topic"])
 
+    def test_index_view_vocab_read_caches_summaries_tombstones_and_only_real_stubs(self):
+        # `view: "index"` topics are `{slug, summary, aliases?}` with no `description` or
+        # `degree`; a topic with no description has `summary: null`; retracted slugs come in
+        # `tombstoned` and are cached as bare entries so the near-miss lint still sees them.
+        # Bare-list tool_response, as Claude Code sends it.
+        doc = {
+            "kb": "home",
+            "default_kb": {"kb": "home", "source": "home"},
+            "categories": [],
+            "topics": [
+                {"slug": "auth", "summary": "Auth flows.", "aliases": ["login"]},
+                {"slug": "stub-topic", "summary": None},
+            ],
+            "tombstoned": ["old-topic"],
+        }
+        resource = {"uri": "gitian-kb://vocab", "mimeType": "application/json", "text": json.dumps(doc)}
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian-kb__read_resource",
+                tool_input={"uri": "gitian-kb://vocab", "view": "index"},
+                tool_response=[{"type": "text", "text": json.dumps(resource)}],
+            )
+        )
+        self.assert_silent(proc)
+        server = self.dump_state()["servers"][SERVER_KEY]
+        self.assertEqual(
+            server["topics"],
+            [
+                {"slug": "auth", "description": "Auth flows.", "degree": 0},
+                {"slug": "stub-topic", "description": "", "degree": 0},
+                {"slug": "old-topic", "description": "", "degree": 0},
+            ],
+        )
+        # A retracted topic is not a stub awaiting a description.
+        self.assertEqual(server["undescribedTopics"], ["stub-topic"])
+        self.assertEqual(server["defaultKb"], {"kb": "home", "source": "home"})
+
     def test_read_resource_vocab_envelope_with_unparsable_nested_text_harvests_no_topics(self):
         proc = self.run_harvest(
             envelope(

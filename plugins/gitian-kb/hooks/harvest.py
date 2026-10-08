@@ -468,12 +468,32 @@ def _normalize_topics(raw_topics):
             continue
         description = entry.get("description")
         if not isinstance(description, str):
-            description = ""
+            # The vocabulary's `view: "index"` read carries `summary` (the description's first
+            # sentence, null when there is none) instead of `description`. Without this fallback
+            # every topic of an index read would be cached as an undescribed stub.
+            summary = entry.get("summary")
+            description = summary if isinstance(summary, str) else ""
         degree = entry.get("degree")
         if not isinstance(degree, (int, float)) or isinstance(degree, bool):
             degree = 0
         normalized.append({"slug": slug, "description": description, "degree": degree})
     return normalized[:MAX_TOPICS]
+
+
+def _tombstoned_topics(vocab, live):
+    """The index view lists live topics only and names the retracted ones in `tombstoned`. The
+    full view carried them inside `topics`, so the near-miss lint saw those slugs; cache each one
+    as a bare entry (description "", degree 0) so it still does. Skips a slug already cached."""
+    raw = vocab.get("tombstoned") if isinstance(vocab, dict) else None
+    if not isinstance(raw, list):
+        return []
+    seen = set(t["slug"] for t in live)
+    entries = []
+    for slug in raw:
+        if isinstance(slug, str) and slug and slug not in seen:
+            seen.add(slug)
+            entries.append({"slug": slug, "description": "", "degree": 0})
+    return entries
 
 
 def harvest(raw_text, payload):
@@ -513,8 +533,11 @@ def harvest(raw_text, payload):
             # time: the most recent observation is the truth.
             server_updates["defaultKb"] = _normalize_default_kb(vocab.get("default_kb"))
             normalized = _normalize_topics(topics)
-            server_updates["topics"] = normalized
+            tombstoned = _tombstoned_topics(vocab, normalized)
+            server_updates["topics"] = (normalized + tombstoned)[:MAX_TOPICS]
             server_updates["vocabFetchedAt"] = state_mod.now_iso()
+            # A retracted topic is not a stub waiting for a description, so the tombstoned entries
+            # stay out of this list even though they are cached with an empty one.
             server_updates["undescribedTopics"] = [
                 t["slug"] for t in normalized if not t["description"]
             ]

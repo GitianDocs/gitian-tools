@@ -85,9 +85,9 @@ question. Answer with `SendMessage` to that same scribe; it then publishes.
 ## When you cannot spawn agents
 
 A subagent cannot spawn a subagent. If you are one (or dispatching is unavailable), read
-`references/authoring.md` beside this file and work inline. Also there: `kb-targeting.md` (the `kb`
-argument, routing, linked and org KBs), `topics.md` (topics, mentions, categories),
-`spec-authoring.md` (manifests, the recap checklist). Companions: **gitian-spec** owns
+`references/authoring.md` beside this file and work inline. Also there: `kb-targeting.md` (`kb`,
+routing, linked and org KBs), `topics.md`, `spec-authoring.md` (manifests, recap checklist),
+`scribe-playbook.md` (rare agent procedures). Companions: **gitian-spec** owns
 spec/plan/design *requests*, **gitian-docs** annotations.
 
 ## The nudge layer
