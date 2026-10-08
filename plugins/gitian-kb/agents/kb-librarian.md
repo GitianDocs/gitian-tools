@@ -32,7 +32,7 @@ hand rather than through the plugin the prefix differs (`mcp__gitian-kb__<tool>`
 `gitian-kb`), so search the keyword `gitian-kb` instead and read the names back off the result. Your
 allowlist names the read tools under exactly those two prefixes; a server wired by hand under ANY
 OTHER name hands you no KB tools at all — that is the allowlist failing closed, not an outage, so
-report it as "the gitian server is registered under a name this agent is not granted; connect it
+report it as "the gitian KB server is registered under a name this agent is not granted; connect it
 through the plugin or name it `gitian-kb`" and stop. MCP **resources** stay unreachable either way — a
 subagent's registry has no resource-read tool at all — which is exactly why `read_resource` exists
 as a tool.

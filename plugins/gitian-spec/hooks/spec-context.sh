@@ -8,7 +8,7 @@
 #     the gitian-spec skill, never loose markdown files
 #   - a companion warning ONLY when the gitian-kb plugin is missing from
 #     installed_plugins.json -- gitian-spec ships no MCP config of its own (single-connection
-#     design), so without gitian-kb there are no gitian tools to publish with
+#     design), so without gitian-kb there are no gitian-kb tools to publish with
 #
 # NOTHING AT ALL in a delegated session: when the payload carries `agent_id` (set only when a hook
 # fires inside a subagent) or `agent_type` (the field SessionStart documents -- a subagent's type,
@@ -35,7 +35,7 @@ context="gitian-spec: specs, plans, designs, brainstorms, handoffs, and session 
 # missing or unreadable we cannot tell, so stay quiet rather than warn wrongly.
 installed="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
 if [ -f "$installed" ] && ! grep -q '"gitian-kb@' "$installed" 2>/dev/null; then
-  context="${context}\n\nWARNING: the required companion plugin gitian-kb is not installed. gitian-spec ships no MCP config of its own (single-connection design), so the gitian tools are unavailable until you run: claude plugin install gitian-kb@gitian-tools"
+  context="${context}\n\nWARNING: the required companion plugin gitian-kb is not installed. gitian-spec ships no MCP config of its own (single-connection design), so the gitian-kb tools are unavailable until you run: claude plugin install gitian-kb@gitian-tools"
 fi
 
 printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$context"
