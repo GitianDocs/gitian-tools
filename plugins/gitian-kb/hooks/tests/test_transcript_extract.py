@@ -649,3 +649,94 @@ class FailOpen(ExtractTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SweepMarker(ExtractTestCase):
+    """--since-last-sweep / --commit-sweep: the category sweep's per-transcript marker
+    (scribe-playbook.md, "Category sweep")."""
+
+    def setUp(self):
+        super().setUp()
+        self.state_file = os.path.join(self.tmpdir, "state.json")
+        self._saved_env = os.environ.get("GITIAN_KB_STATE_FILE")
+        os.environ["GITIAN_KB_STATE_FILE"] = self.state_file
+
+    def tearDown(self):
+        if self._saved_env is None:
+            os.environ.pop("GITIAN_KB_STATE_FILE", None)
+        else:
+            os.environ["GITIAN_KB_STATE_FILE"] = self._saved_env
+        super().tearDown()
+
+    def transcript(self):
+        return self.write_transcript(
+            [
+                user_line("first ask", timestamp="2026-10-16T10:00:00.000Z"),
+                assistant_line([text_block("first answer")], timestamp="2026-10-16T10:00:05.000Z"),
+                user_line("second ask", timestamp="2026-10-16T10:05:00.000Z"),
+            ]
+        )
+
+    def through(self, out):
+        lines = [l for l in out.splitlines() if l.startswith("## sweep-through ")]
+        self.assertEqual(len(lines), 1, msg=out)
+        return lines[0][len("## sweep-through "):]
+
+    def test_first_sweep_reads_everything_and_names_the_newest_instant(self):
+        out = self.run_extract(self.transcript(), "--since-last-sweep")
+        self.assertIn("first ask", out)
+        self.assertIn("second ask", out)
+        self.assertTrue(self.through(out).startswith("2026-10-16T10:05:00"), msg=out)
+
+    def test_a_committed_sweep_is_not_read_again(self):
+        path = self.transcript()
+        self.run_extract(path, "--commit-sweep", "2026-10-16T10:00:05+00:00")
+        out = self.run_extract(path, "--since-last-sweep")
+        self.assertNotIn("first ask", out)
+        self.assertNotIn("first answer", out)
+        self.assertIn("second ask", out)
+
+    def test_nothing_new_prints_nothing(self):
+        path = self.transcript()
+        self.run_extract(path, "--commit-sweep", "2026-10-16T10:05:00+00:00")
+        self.assertEqual(self.run_extract(path, "--since-last-sweep"), "")
+
+    def test_reading_never_moves_the_marker(self):
+        path = self.transcript()
+        self.run_extract(path, "--since-last-sweep")
+        self.assertIn("first ask", self.run_extract(path, "--since-last-sweep"))
+
+    def test_the_marker_never_moves_backwards(self):
+        path = self.transcript()
+        self.run_extract(path, "--commit-sweep", "2026-10-16T10:05:00+00:00")
+        self.run_extract(path, "--commit-sweep", "2026-10-16T10:00:00+00:00")
+        self.assertEqual(self.run_extract(path, "--since-last-sweep"), "")
+
+    def test_relative_and_absolute_paths_share_one_marker(self):
+        path = self.transcript()
+        self.run_extract(os.path.relpath(path), "--commit-sweep", "2026-10-16T10:05:00+00:00")
+        self.assertEqual(self.run_extract(os.path.abspath(path), "--since-last-sweep"), "")
+
+    def test_a_corrupt_state_file_reads_everything_and_commit_repairs_it(self):
+        with open(self.state_file, "w", encoding="utf-8") as fh:
+            fh.write("{not json")
+        path = self.transcript()
+        self.assertIn("first ask", self.run_extract(path, "--since-last-sweep"))
+        self.run_extract(path, "--commit-sweep", "2026-10-16T10:05:00+00:00")
+        with open(self.state_file, encoding="utf-8") as fh:
+            self.assertIn("sweeps", json.load(fh))
+
+    def test_untimed_messages_after_a_marker_are_not_reswept(self):
+        path = self.write_transcript(
+            [
+                user_line("timed", timestamp="2026-10-16T10:00:00.000Z"),
+                {"type": "user", "isSidechain": False, "message": {"role": "user", "content": "untimed"}},
+            ]
+        )
+        self.run_extract(path, "--commit-sweep", "2026-10-16T10:00:00+00:00")
+        self.assertNotIn("untimed", self.run_extract(path, "--since-last-sweep"))
+
+    def test_commit_with_a_garbage_instant_commits_nothing(self):
+        path = self.transcript()
+        self.assertEqual(self.run_extract(path, "--commit-sweep", "not-a-time"), "")
+        self.assertIn("first ask", self.run_extract(path, "--since-last-sweep"))

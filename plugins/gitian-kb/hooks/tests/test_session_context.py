@@ -171,6 +171,7 @@ class DelegationDirective(SessionContextTestCase):
             self.assertIn("kb-librarian", context)
             self.assertIn("kb-scribe", context)
             self.assertIn("Never auto-publish", context)
+            self.assertIn("category sweep", context)
 
     def test_the_retired_pre_delegation_paragraphs_are_gone(self):
         # The discipline they carried lives in the agents now; repeating it here is what made the

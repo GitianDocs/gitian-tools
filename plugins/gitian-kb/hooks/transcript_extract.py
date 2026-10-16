@@ -6,6 +6,8 @@ from what was actually said instead of the primary re-emitting it. session-conte
 halves of that handoff (the transcript path and this command line) into SessionStart context.
 
     python3 transcript_extract.py <transcript.jsonl> [--last N] [--since ISO8601] [--max-chars N]
+    python3 transcript_extract.py <transcript.jsonl> --since-last-sweep [--max-chars N]
+    python3 transcript_extract.py <transcript.jsonl> --commit-sweep ISO8601
 
 Output is plain text on stdout, one block per surviving message, in TIMESTAMP order (the real
 JSONL is not strictly chronological -- 68 of 5225 kept records were out of order in the largest
@@ -66,6 +68,16 @@ Flags (each independently fail-open -- an unparsable value is ignored, never fat
                   the whole output, banner included -- EXCEPT that the newest message is always
                   emitted whole, so a long final answer is never reduced to a banner.
 
+The category sweep (kb-scribe's last step every dispatch -- scribe-playbook.md, "Category sweep"):
+  --since-last-sweep   print only the messages strictly AFTER the last committed sweep of this
+                       transcript (all of it when there is none), then a last line
+                       `## sweep-through <instant>`; nothing at all when nothing is new.
+  --commit-sweep ISO   move this transcript's marker to that instant, never backwards; prints
+                       nothing. The scribe runs it only after every sweep write succeeded, and
+                       reading never moves the marker, so a failed sweep retries the same stretch.
+  The marker lives in the plugin's state file (state.py) under a top-level `sweeps` map keyed by
+  the transcript's real path, each entry pruned 14 days after its last commit.
+
 Fail-open, always: a missing/unreadable/malformed transcript yields whatever parsed (possibly
 nothing) and the process always exits 0. Never a traceback, never a non-zero exit.
 
@@ -73,9 +85,13 @@ Tests: plugins/gitian-kb/hooks/tests/test_transcript_extract.py
 """
 
 import json
+import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import state as state_mod  # noqa: E402  (sibling module, the way harvest.py imports it)
 
 DEFAULT_MAX_CHARS = 120000
 BLOCK_SEPARATOR = "\n\n"
@@ -140,6 +156,8 @@ def _parse_args(argv):
     last = None
     since = None
     max_chars = DEFAULT_MAX_CHARS
+    sweep = False
+    commit = None
 
     i = 0
     while i < len(argv):
@@ -153,6 +171,14 @@ def _parse_args(argv):
         elif arg == "--max-chars" and i + 1 < len(argv):
             max_chars = _positive_int(argv[i + 1]) or DEFAULT_MAX_CHARS
             i += 2
+        elif arg == "--since-last-sweep":
+            sweep = True
+            i += 1
+        elif arg == "--commit-sweep" and i + 1 < len(argv):
+            # A garbage instant still means "this was a commit": it commits nothing and reads
+            # nothing, rather than falling through to printing the transcript.
+            commit = _parse_iso(argv[i + 1]) or INVALID_INSTANT
+            i += 2
         elif arg.startswith("-"):
             i += 1  # unknown flag -- ignored, not fatal
         else:
@@ -160,7 +186,7 @@ def _parse_args(argv):
                 path = arg
             i += 1
 
-    return path, last, since, max_chars
+    return path, last, since, max_chars, sweep, commit
 
 
 def _positive_int(value):
@@ -330,9 +356,13 @@ def read_messages(path):
     return _dedupe([(e[2], e[3], e[4], e[5]) for e in entries])
 
 
-def _filter_since(messages, since):
+def _filter_since(messages, since, exclusive=False):
     if since is None:
         return messages
+    if exclusive:
+        # A sweep marker is an instant already covered: keep only what is strictly newer, and
+        # drop untimed records, which would otherwise be re-swept on every dispatch.
+        return [m for m in messages if m[1] is not None and m[1] > since]
     return [m for m in messages if m[1] is None or m[1] >= since]
 
 
@@ -363,9 +393,9 @@ def _fit(blocks, max_chars):
     return kept, len(blocks) - len(kept)
 
 
-def render(messages, last=None, since=None, max_chars=DEFAULT_MAX_CHARS):
+def render(messages, last=None, since=None, max_chars=DEFAULT_MAX_CHARS, exclusive=False):
     """The whole reduction, as a pure function of already-parsed messages."""
-    messages = _filter_since(messages, since)
+    messages = _filter_since(messages, since, exclusive)
     if last is not None:
         messages = messages[-last:]
 
@@ -384,14 +414,78 @@ def render(messages, last=None, since=None, max_chars=DEFAULT_MAX_CHARS):
     return body + "\n"
 
 
+# -- The category sweep's marker -- see the module docstring. -------------------------------------
+SWEEP_KEY = "sweeps"
+SWEEP_MAX_AGE_DAYS = 14
+INVALID_INSTANT = "invalid"
+
+
+def _sweep_key(path):
+    return os.path.realpath(path)
+
+
+def read_sweep_marker(path):
+    """The instant the last committed sweep of this transcript reached, or None."""
+    data = state_mod.load(state_mod.state_path())
+    sweeps = data.get(SWEEP_KEY)
+    entry = sweeps.get(_sweep_key(path)) if isinstance(sweeps, dict) else None
+    return _parse_iso(entry.get("through")) if isinstance(entry, dict) else None
+
+
+def commit_sweep_marker(path, through):
+    """Advance the marker to `through` -- never backwards -- and prune stale entries."""
+    target = state_mod.state_path()
+
+    def mutate():
+        data = state_mod.load(target)
+        sweeps = data.get(SWEEP_KEY) if isinstance(data.get(SWEEP_KEY), dict) else {}
+        key = _sweep_key(path)
+        entry = sweeps.get(key) if isinstance(sweeps.get(key), dict) else {}
+        current = _parse_iso(entry.get("through"))
+        if current is None or through > current:
+            sweeps[key] = {"through": through.isoformat(), "updatedAt": state_mod.now_iso()}
+        cutoff = datetime.now(timezone.utc) - timedelta(days=SWEEP_MAX_AGE_DAYS)
+        for k in list(sweeps):
+            stamp = sweeps[k].get("updatedAt") if isinstance(sweeps[k], dict) else None
+            updated = _parse_iso(stamp)
+            if updated is not None and updated < cutoff:
+                del sweeps[k]
+        data[SWEEP_KEY] = sweeps
+        state_mod.save(target, state_mod.finalize(data))
+
+    state_mod.with_lock(target, mutate)
+
+
+def sweep_through(messages, since):
+    """The newest instant a sweep from `since` covers, or None when nothing is new."""
+    stamps = [m[1] for m in _filter_since(messages, since, exclusive=True) if m[1] is not None]
+    return max(stamps) if stamps else None
+
+
 def main(argv):
-    path, last, since, max_chars = _parse_args(argv)
+    path, last, since, max_chars, sweep, commit = _parse_args(argv)
     if not path:
+        return
+    if commit is not None:
+        if commit != INVALID_INSTANT:
+            commit_sweep_marker(path, commit)
         return
     try:
         messages = read_messages(path)
     except Exception:
         return  # missing file, a directory, an unreadable path -- silent, exit 0
+    if sweep:
+        marker = read_sweep_marker(path)
+        through = sweep_through(messages, marker)
+        if through is None:
+            return  # nothing new since the last committed sweep
+        out = render(
+            messages, last=last, since=marker, max_chars=max_chars, exclusive=marker is not None
+        )
+        if out:
+            sys.stdout.write(out)
+            sys.stdout.write("## sweep-through %s\n" % through.isoformat())
+        return
     out = render(messages, last=last, since=since, max_chars=max_chars)
     if out:
         sys.stdout.write(out)

@@ -153,7 +153,7 @@ if [ -n "$transcript_path" ]; then
   context="${context}\n- transcript-extract: python3 ${extractor}"
 fi
 if [ -z "$delegated" ]; then
-  context="${context}\n\nKB work is delegated: dispatch \`kb-librarian\` to orient before substantive work, brief \`kb-scribe\` (10-20 lines -- what happened and WHY) at completion points. You decide WHEN a publish is warranted and WHAT mattered; the scribe authors and revises. Never auto-publish."
+  context="${context}\n\nKB work is delegated: dispatch \`kb-librarian\` to orient before substantive work, brief \`kb-scribe\` (10-20 lines -- what happened and WHY) at completion points. You decide WHEN a publish is warranted and WHAT mattered; the scribe authors and revises. Never auto-publish (bar the scribe's category sweep)."
   context="${context}\n\`get\` directly only what you will act on; a one-off \`search\`/\`get\` stays inline."
   context="${context}\nOne scribe and one librarian in flight; a follow-up on the same item goes to the LIVE agent via \`SendMessage\`. Every brief states \`kb\` (the KB the human named, else \`auto\`), \`repo\` as owner/name and the branch -- a subagent sees none of this context. Docs and journal entries with an org-owned \`repo\` route to that org's team KB, memories never; with neither \`kb\` nor \`repo\` a write can only land in \`home\`. The scribe reports \`landed_in\`. Pass the transcript lines when they hold the substance."
   context="${context}\nA subagent (you cannot spawn one)? Read the gitian-kb skill's \`references/authoring.md\` and work inline."

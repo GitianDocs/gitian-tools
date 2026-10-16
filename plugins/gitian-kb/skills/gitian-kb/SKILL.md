@@ -30,7 +30,7 @@ append, retraction, dedupe merge).
 | Status/commits/next_steps moved | a revision of that slug, never a new one |
 
 **Never auto-publish** — completion points and explicit user intent only; never silently, in bulk,
-or on a timer. A pivot or a wrapped session clears the bar; a rename or a re-run does not.
+or on a timer. Sole exception: the scribe's category sweep, which reports every item.
 
 ## Dispatching
 
@@ -42,7 +42,7 @@ or on a timer. A pivot or a wrapped session clears the bar; a rename or a re-run
   most one scribe and one librarian in flight; a follow-up on the same item goes to the **live
   scribe via `SendMessage`**, unrelated work waits for the report.
 - **Reads you will act on, you make yourself.** `get` the doc you are about to follow; a one-off
-  `search`/`get` stays inline — spawning an agent costs more. On `ambiguous_slug`, retry with a
+  `search`/`get` stays inline. On `ambiguous_slug`, retry with a
   `kb` from its `candidates`, never a guess. Dispatch the librarian for a multi-call sweep, a
   digest, or a vocab-delta refresh when `vocab_rev` moves.
 - **Writes are never inline.** Brief the scribe.
@@ -68,7 +68,7 @@ Required every time — the scribe has no cwd and no conversation:
 Whatever else applies: **target slug** (revising, retracting, merging — survivor **and** duplicate
 for a dedupe); **rejected alternatives**; **status / impl_status** — state a terminal flip or
 retraction explicitly, the scribe infers neither; **pr / commits**; **topics to mint** — only a
-genuinely new concept; **transcript + transcript-extract** — both session-context lines when the
+genuinely new concept; **snags hit** — sweep material; **transcript + transcript-extract** — both session-context lines when the
 conversation holds the substance.
 
 ## Reports and sign-off

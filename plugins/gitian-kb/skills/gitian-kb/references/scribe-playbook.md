@@ -95,8 +95,8 @@ as `mentions` (what it *touches*). **Mint only slugs the brief names**: a novel 
 a permanent, undescribed stub, which is how synonym fragmentation creeps in. When nothing in the
 vocabulary fits and the brief named nothing, publish **without** topics and flag it in your report
 so the primary can decide; never invent a slug to fill a count, and never link a topic that just
-repeats the project or repo name (`project_name_topic`). `category`: at most one, only a slug the
-vocab lists, otherwise `null`.
+repeats the project or repo name (`project_name_topic`). `category`: at most one, the slug whose
+prompt the item answers, from the item's own KB's vocab, otherwise `null`.
 
 **Describing stubs.** When a write mints stubs (`organic_topics_minted` /
 `undescribed_topics_minted`) and the brief supplies their meaning, describe them ALL in ONE
@@ -115,6 +115,36 @@ didn't link. Adopt one only when it names what the item is *about* (existing voc
 a mint) in a follow-up `patch_doc`/`patch_memory` on `topics`/`mentions` carrying the `base_rev`
 that publish just returned; ignore the rest rather than padding a count. Name the ones you adopted
 in your report.
+
+## Category sweep
+
+Every dispatch ends with one, after the briefed writes: the one publish you start yourself. It
+exists because a category's prompt is the owner asking for something ("what did I learn about
+postgresql?", "maintain my resume"), and nothing else in the session ever asks an agent to answer.
+
+1. **Prompts:** the categories (slug, name, `prompt`) of the brief's target KB and of `home`.
+   Read `home`'s vocab too when the target is another KB. None in either: report `category sweep:
+   nothing new` and stop.
+2. **Material:** `python3 <plugin>/hooks/transcript_extract.py <file.jsonl> --since-last-sweep`
+   prints only what is new since the last committed sweep of this transcript, then a last line
+   `## sweep-through <instant>`. Empty output: nothing new; report it and stop.
+3. **Match:** for each prompt, does the slice hold something a reader of that prompt would want —
+   a snag hit and how it was solved, a lesson about a tool, evidence of a skill? Progress the brief
+   already covers is not a match. Never invent; never quote a credential.
+4. **Write, per match:** `list { category: <slug> }` in that category's KB, then `get` the item on
+   the same subject, if there is one, and revise it (`patch_doc` / `patch_memory`, `body_edits` or
+   `body_append`; extend, never shrink). Otherwise create one there: a memory for a single fact, a
+   doc for a running record (the closest `type` `gitian-kb://format/doc` allows). A `home`
+   category's item lands in `home` (`kb: "home"`) whatever the brief's target. Set `category`.
+   Follow the prompt's own wording on shape: "maintain a document… never delete" means revise
+   that document, never retract or replace it.
+5. **Commit:** only when every sweep write succeeded,
+   `python3 <plugin>/hooks/transcript_extract.py <file.jsonl> --commit-sweep <instant>` with the
+   `sweep-through` instant. A failed write leaves the marker, so the next dispatch retries.
+6. **Report** one line: `category sweep: concepts: created <slug> · resume: revised <slug>`, or
+   `category sweep: nothing new`.
+
+No transcript path in the brief: skip the sweep and say so in the report.
 
 ## Terminal flips and the journal
 

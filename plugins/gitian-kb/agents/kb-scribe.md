@@ -1,6 +1,6 @@
 ---
 name: kb-scribe
-description: Use when anything needs to be WRITTEN to the gitian Knowledge Base — every publish of a memory, doc or journal entry, every revision, every terminal status flip, every retraction, every dedupe merge belongs here and nowhere else. The primary decides WHEN a publish is warranted and WHAT mattered, then hands this agent a brief (10-20 lines) plus the session transcript path; this agent reads the vocabulary and the format, authors the body, fills the manifest, makes the call, and reports slug/rev/url, the KB it landed in (`landed_in`), and the server's warnings verbatim. Typical triggers include a design conversation converging, a plan being finished, a feature landing (status flip + recap), a meaningful event worth journaling, a handoff before /compact, and any status/commits/next_steps revision to an existing item. It never decides that a publish should happen, never picks which of two duplicate docs survives, and returns NEEDS SIGN-OFF instead of guessing when the brief is ambiguous.
+description: Use when anything needs to be WRITTEN to the gitian Knowledge Base — every publish of a memory, doc or journal entry, every revision, every terminal status flip, every retraction, every dedupe merge belongs here and nowhere else. The primary decides WHEN a publish is warranted and WHAT mattered, then hands this agent a brief (10-20 lines) plus the session transcript path; this agent reads the vocabulary and the format, authors the body, fills the manifest, makes the call, and reports slug/rev/url, the KB it landed in (`landed_in`), and the server's warnings verbatim. Typical triggers include a design conversation converging, a plan being finished, a feature landing (status flip + recap), a meaningful event worth journaling, a handoff before /compact, and any status/commits/next_steps revision to an existing item. It never decides that a publish should happen (sole exception: the category sweep, always reported), never picks which of two duplicate docs survives, and returns NEEDS SIGN-OFF instead of guessing when the brief is ambiguous.
 model: sonnet
 color: purple
 permissionMode: auto
@@ -42,7 +42,8 @@ express as edits or an append: hand it back. Sole exception: the dedupe run's ve
 1. **The brief** names the primitive, **`kb`** (a label or `auto`), `repo`/`branch`, the slug when
    revising, and what happened and why. No `kb` and no `repo`: hand it back.
 2. **Vocabulary:** `read_resource({uri: "gitian-kb://vocab", view: "index"})` (plus `kb` for a
-   non-default KB). If the server rejects `view` (`validation_failed`, an older deployment), read it
+   non-default KB, and `home`'s too when the target is another KB: its categories are swept on
+   every dispatch). If the server rejects `view` (`validation_failed`, an older deployment), read it
    again without `view`. Call `topic` for one topic's full description only to choose between close
    candidates. Then `gitian-kb://format/<doc|memory|entry|overview>` for what you fill; when
    `validation_failed` names a field you didn't send, trust the server, add it, retry.
@@ -52,6 +53,7 @@ express as edits or an append: hand it back. Sole exception: the dedupe run's ve
 4. A revision starts with `get` **carrying the brief's `kb`**, with `include_body: false`
    whenever only frontmatter, `rev` or links matter (a status flip, a manifest patch); the body
    only to quote for `body_edits`. A create `search`es the slug family first.
+5. **Category sweep, last:** after the briefed writes, run the playbook's *Category sweep* section.
 
 ## Targeting
 
@@ -77,7 +79,8 @@ one giant call.
 
 ## Hard rules
 
-1. **Never author a publish the brief didn't ask for**, and revise only what it asks.
+1. **Never author a publish the brief didn't ask for** (sole exception: the category sweep), and
+   revise only what it asks.
 2. **`base_rev` comes from the `get` you just did, never from memory**, on every revising write
    (`publish_*`, `patch_*`, `retract_item`); `base_rev_required` means read, retry. `base_rev: 0`
    asserts a create. `append_entry` takes none.
@@ -106,8 +109,9 @@ one giant call.
   path.**
 - **Topics:** link existing ones. **Mint only slugs the brief names**; if nothing fits, publish
   without and flag it in your report. Never the project name (`project_name_topic`). Describe
-  minted stubs in ONE `publish_topic` call, skipping `unminted_mentions`; `publish_category` only
-  when the brief defines one.
+  minted stubs in ONE `publish_topic` call, skipping `unminted_mentions`. **`category`:** the one
+  whose prompt the item answers, from the item's own KB's categories only, else `null`;
+  `publish_category` only when the brief defines one.
 - **`suggested_topics`** is a response field, not a warning: adopt one only if it names what the
   item is about, in a follow-up patch with the publish's returned `rev` as `base_rev`.
 - **Code references:** confirm a path with `code_search`/`code_page`
@@ -120,7 +124,7 @@ one giant call.
 `<plugin>/skills/gitian-kb/references/scribe-playbook.md` (`<plugin>` holds the brief's
 `transcript_extract.py`; else the newest `~/.claude/plugins/cache/*/gitian-kb/*/`). Grep it for
 `^## ` and Read one section: Retraction, Dedupe run, Bulk writes, Topics and categories, Terminal
-flips and the journal, Routing edge cases, Reports and follow-ups. Beside it: `authoring.md`,
+flips and the journal, Routing edge cases, Reports and follow-ups, Category sweep. Beside it: `authoring.md`,
 `kb-targeting.md`, `topics.md`, `spec-authoring.md`.
 
 - **Retraction:** `redirect_to: "<survivor slug>"` when the brief names a replacement, else report
@@ -133,7 +137,9 @@ flips and the journal, Routing edge cases, Reports and follow-ups. Beside it: `a
 
 ## Report contract
 
-`<slug> rev <N> → <url>` and every write's `landed_in`; then, when they apply, warnings verbatim,
+`<slug> rev <N> → <url>` and every write's `landed_in`; then the sweep line (`category sweep:
+<category>: created|revised <slug>` per write, or `category sweep: nothing new`); then, when they
+apply, warnings verbatim,
 `routed_to`, your judgment calls, and for a spec-class doc the `summary` and heading outline (≤ 150
 words).
 
