@@ -84,8 +84,8 @@ your sweeping reads alongside your own — *and yours show up in theirs*. A link
 "I get to read them": accepting exposes the whole KB you accept into, which is why accepting a
 link invite needs the `admin` role on that KB, the same role needed to send one. If a user asks
 whether to accept, say that plainly — the exposure is the decision. Nothing about writing
-changes either way: `publish_*`, `patch_*`, `append_entry`, `retract_item`, `publish_topic` and
-`retract_topic` can only ever land in a KB you're a member of. Inviting, accepting, declining,
+changes either way: `publish_*`, `patch_*`, `append_entry`, `retract_item`, `move_item` (both of
+its KBs), `publish_topic` and `retract_topic` can only ever land in a KB you're a member of. Inviting, accepting, declining,
 and unlinking all happen in the web UI (the `/kb` invites inbox and `/kb/<kb>/settings`) — there
 is **no MCP tool for inviting or linking**, and no tool that lists who is linked to you. Don't
 try to arrange one over MCP; ask the user.

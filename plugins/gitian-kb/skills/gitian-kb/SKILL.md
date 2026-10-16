@@ -51,7 +51,7 @@ or on a timer. Sole exception: the scribe's category sweep, which reports every 
 
 Required every time — the scribe has no cwd and no conversation:
 
-- **intent** — publish | revise | journal | retract | dedupe
+- **intent** — publish | revise | journal | retract | dedupe | move
 - **primitive / type** — memory | doc (`spec`/`plan`/`design`/`handoff`/`recap`) | entry
 - **kb** — the target, never blank: the KB the human named, else the `kb` label of the sweep hit
   being revised, else `auto` (let `repo` routing decide). **A KB the human names is the brief's

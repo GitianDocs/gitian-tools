@@ -146,6 +146,29 @@ postgresql?", "maintain my resume"), and nothing else in the session ever asks a
 
 No transcript path in the brief: skip the sweep and say so in the report.
 
+## Moving an item
+
+`move_item { slug, from_kb, kb, to_slug?, base_rev }` moves a doc or journal entry to another KB
+with every revision, author and timestamp, and leaves the old slug redirecting there (followed only
+for readers of the target). It needs write on both KBs. **Memories never move** (`memory_cannot_move`):
+they never route to an org KB.
+
+**A candidate** is a `home` doc or entry whose `repo` belongs to an org whose team KB you can write,
+i.e. exactly where routing would land it if it were written today. A move only corrects an old
+placement; it never invents one.
+
+**When:** the brief asks (one slug, or "the docs for <repo>"), the brief names a candidate the
+librarian flagged, or the doc the brief asks you to revise is a candidate: move it first, then
+revise it in the target with an explicit `kb` and the `base_rev` from a fresh `get` there. Never
+crawl `home` for candidates on your own.
+
+1. `get` the source with `include_body: false`; its `rev` is the move's `base_rev`.
+2. `move_item { slug, from_kb: "home", kb: "<org>/team", base_rev }`. `slug_taken`: report it and
+   stop, unless the brief gave a `to_slug`.
+3. Report `moved: <slug> home → <org>/team`, plus `category_dropped` (the target has no such
+   category) and `links_left_behind` (items it links that stay in `home`, which teammates can't
+   follow) verbatim when present.
+
 ## Terminal flips and the journal
 
 **Terminal states** only on an explicit instruction. `landed` means `status: landed`,
@@ -219,7 +242,9 @@ The brief: what exists (slug + `rev` + a one-line conclusion each, in your own w
 pasted summary field); the vocabulary's `vocab_rev`; the live topics (slug + summary for every
 topic, not just the rev number: the primary links topics off this list); **"get these:"** the 1-3
 slugs to read in full and which sections; any `file_intents`/`contention` hits, naming the
-contending slug and the overlapping paths. List every KB label the sweep covered for the repo
+contending slug and the overlapping paths. **Move candidates:** when the repo's owner is an org
+whose team KB answers (`list { kb: "<owner>/team", limit: 1 }`), `list { kb: "home", repo }` and
+name every doc or entry there (never a memory) as a candidate for `<owner>/team`. List every KB label the sweep covered for the repo
 (every `kb` your hits carried plus any `own_only_kbs` entry, e.g. "`home`, `acme/team`
 (own-only)"): that list is how the primary learns a team KB exists and what to put in a brief's
 `kb`. A thin result from an unsubscribed org KB is not "the team has nothing in flight".
