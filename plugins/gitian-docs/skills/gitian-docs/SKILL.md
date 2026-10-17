@@ -117,4 +117,5 @@ not the one it replaced. No `docs/` edit needed here — this file has no paired
 
 For full annotation syntax, the `.gitian/config.yaml` schema, and adoption from scratch, fetch
 `https://gitian.dev/gitian-adoption-prompt.md` — it is the canonical, always-current reference this
-skill condenses. The rendered guide lives at `https://gitian.dev/guide`.
+skill condenses. The rendered docs: `https://gitian.dev/docs/code` (annotations, `docs/` pairing,
+code references) and `https://gitian.dev/docs/reference` (syntax and config schema).
