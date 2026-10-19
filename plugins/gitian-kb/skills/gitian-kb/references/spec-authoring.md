@@ -84,6 +84,15 @@ Append-only: never reorder. A squash-merge lists the single squash commit; a mul
 lists all commits chronologically regardless of branch. Derived from `git log --oneline` or from
 the brief, never from memory.
 
+**A merged PR's commits come from the code server when it is connected.** The brief names the PR
+(`owner/name#N`); `code_pr({ repo, number, include: ["commits"] })` returns its commits oldest
+first as `{ sha, headline }`: each item is the first 7 characters of `sha`, two spaces, the
+`headline`. A squash-merge still lists the one squash commit (the card's `merge_commit_sha`; its
+subject from `git log -1` or the brief), not the branch's. Check `commits_truncated` (over 100
+commits: take the rest from git) and `synced_at` (the mirror is a dated copy, not a live read).
+`indexing`, `not_found` or no code tools: fall back to `git log` and say so in the report. Paste
+the card's `pr_ref` where the recap names the PR.
+
 ## Implementation recap
 
 Required when a feature reaches `impl_status: done` (even if unmerged); refreshed when it lands.

@@ -64,10 +64,13 @@ token itself — a configured header would suppress that flow. The grant is list
 Connected agents as **Repositories** and is revocable on its own; it is separate from the
 knowledge-base connection (`gitian-kb`), and a credential for one is refused by the other.
 
-Five tools, with the contract in `docs/code-mcp-transport.md`: `code_repos` (which repos you can
+Seven tools, with the contract in `docs/code-mcp-transport.md`: `code_repos` (which repos you can
 open), `code_overview` (orient in one), `code_search` (find a file, doc or `@gitian` annotation —
-never returns content), `code_annotation` (one annotation by id) and `code_page` (a file's outline,
-and a bounded excerpt only for a symbol or line range you name). The tools appear as
+never returns content), `code_annotation` (one annotation by id), `code_page` (a file's outline,
+and a bounded excerpt only for a symbol or line range you name), `code_prs` (list pull requests,
+filterable by state, author, label, branch and touched file) and `code_pr` (one pull request, with
+its commits, files, reviews or timeline on request; each carries a `pr_ref` to paste into a KB
+body). Pull requests are read from a dated mirror, not live. The tools appear as
 `mcp__plugin_gitian-docs_gitian-code__code_*`. A Knowledge Base item points at what they find with a
 `[[repo:owner/name[@ref]/path#Symbol]]` link or a `code_refs` entry (see the skill).
 

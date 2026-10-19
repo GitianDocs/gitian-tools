@@ -1,6 +1,6 @@
 ---
 name: gitian-docs
-description: Use when changing code in a repo instrumented with gitian (a `.gitian/` directory or `@gitian` annotations present) — keep annotations and paired docs in sync as part of the change — when adopting gitian documentation in a repo, and when you need to find or read code, a symbol or an `@gitian` annotation in a gitian-connected repository (the `code_*` tools).
+description: Use when changing code in a repo instrumented with gitian (a `.gitian/` directory or `@gitian` annotations present) — keep annotations and paired docs in sync as part of the change — when adopting gitian documentation in a repo, and when you need to find or read code, a symbol or an `@gitian` annotation in a gitian-connected repository (the `code_*` tools), including its pull requests.
 allowed-tools: Bash(test:*), Bash(git diff:*), Bash(head:*)
 ---
 
@@ -46,7 +46,8 @@ id).
 **Metadata** (`--key=value`, one per line, right after the annotation line): `--id=`, `--title="..."`
 (display heading override), `--group=`, `--urgency=subtle|normal|loud|critical`, `--module=`,
 `--request=<id>` / `--response=<id>` (api kind only — pull another annotation's captured code into
-the Request/Response panel). An `--id=` is also a link target — Knowledge Base items point at it with
+the Request/Response panel), `--pr=` (the pull request(s) behind the code: `#123`, `owner/name#123` or a
+PR URL, comma-separated; drawn as PR chips). An `--id=` is also a link target — Knowledge Base items point at it with
 `[[repo:owner/name/path#@<id>]]` — so keep ids stable, unique within the repo, and lowercase-kebab.
 
 **Docs discovery:** markdown lives in a `docs/` or `.docs/` directory at any level; `docs/foo.ts.md`
@@ -56,9 +57,9 @@ documents the sibling `foo.ts` (the docs dir's parent); `docs/payments.md` docum
 ## Reading code through gitian: the `gitian-code` tools
 
 This plugin connects gitian's **read-only code server** (`gitian-code`; the first call opens a
-browser to approve "read your repositories", nothing to mint or configure). Its five tools find and
-read code in a GitHub repository connected to gitian — without cloning it and without reading whole
-files:
+browser to approve "read your repositories", nothing to mint or configure). Its seven tools find and
+read code and pull requests in a GitHub repository connected to gitian — without cloning it and
+without reading whole files:
 
 | Tool | Use it to |
 |---|---|
@@ -67,11 +68,16 @@ files:
 | `code_search` | find a file, doc or `@gitian` annotation by name, path, title or annotation id — never returns content |
 | `code_annotation` | fetch one annotation by id: description, metadata and the code it captured |
 | `code_page` | one file's outline, annotations and paired doc; an excerpt only for a named symbol, line range or `offset`/`limit` (at most 200 lines) |
+| `code_prs` | list a repo's pull requests (filter by state, author, label, branch, touched `path`), newest first |
+| `code_pr` | one pull request: the card, and on request its commits, files, reviews and timeline |
 
 The usual route is `code_repos` → `code_overview` → `code_search` → `code_page` or
 `code_annotation`. Reads pass the same private-repository gate as the web viewer, so a repo you
 cannot open in gitian answers `not_found`. Prefer them to guessing a path, and take only the slice
 you need; never paste what they return into a document.
+
+Pull requests come from a dated mirror, not a live read, and each carries a `pr_ref` to paste into a
+KB body: see `references/pull-requests.md` in this skill's directory.
 
 When a Knowledge Base item (the `gitian-kb` plugin) points at that code, it links it rather than
 copying it, as `[[repo:owner/name[@ref]/path#Symbol|#Lx-Ly|#@annotation-id|label]]` — one anchor

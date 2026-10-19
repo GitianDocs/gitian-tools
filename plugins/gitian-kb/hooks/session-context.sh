@@ -4,8 +4,15 @@
 # Fires on every SessionStart (startup, resume, clear, compact — no marker-file dedupe; a repeat
 # on resume is harmless). Emits a short hookSpecificOutput.additionalContext block:
 #   - derived context: repo (owner/name, from `git remote get-url origin`), current branch,
-#     today's date (UTC), and this session's transcript -- lines are omitted when the underlying
-#     value isn't available (no remote, detached HEAD, not a git repo at all, no transcript)
+#     today's date (UTC), the current branch's OPEN pull request, and this session's transcript --
+#     lines are omitted when the underlying value isn't available (no remote, detached HEAD, not a
+#     git repo at all, no transcript, no `gh`, no open PR)
+#   - the open-PR line: ONE bounded `gh pr view --json number,url,state` (3 s, `timeout` or
+#     `gtimeout`, stdin closed, no prompts), run only when `gh` is on PATH and the checkout has a
+#     branch. It names the PR only while its state is OPEN. Fail-open and silent: no `gh`, no
+#     timeout binary, no python3, no auth, no network, no PR, a merged or closed PR, a slow answer or
+#     any unexpected output all just leave the line out. It tells the agent which PR the work on
+#     this branch belongs to, so a brief can carry `owner/name#N` instead of a guess.
 #   - the two transcript lines ([[kb-scribe-delegation]]): the session JSONL's absolute path and
 #     the `python3 <plugin>/hooks/transcript_extract.py <path>` command that reduces it to the
 #     conversation. Together they are what a brief hands kb-scribe so the primary never
@@ -44,8 +51,8 @@
 #     bumps the epoch first (gks_bump_epoch, re-arming every once-per-epoch nudge) before
 #     anything below is built. An unrecognized/missing source is treated like startup.
 #
-# Must be fast and silent-safe: no network, plain git plumbing only, always exits 0. The
-# source-profile tail is best-effort layered on top -- a missing python3, a missing
+# Must be fast and silent-safe: plain git plumbing plus the one bounded `gh` call above, always
+# exits 0. The source-profile tail is best-effort layered on top -- a missing python3, a missing
 # session_digest.py, or any error inside it just leaves the tail empty; the static context above
 # (delegation directive included) is built independently and is never lost.
 set -u
@@ -113,6 +120,40 @@ fi
 # --- branch (empty on detached HEAD or no commits yet -- just omit the line) -----------------
 branch="$(git -C "$project_dir" branch --show-current 2>/dev/null || true)"
 
+# --- the branch's open pull request (best-effort; see the header) -----------------------------
+# Needs a branch (detached HEAD and non-repos have none, so this also covers "inside a git repo"),
+# `gh`, a timeout binary and python3 for the JSON. The reply is validated to a `#N https://...`
+# shape of plain URL characters before it is allowed anywhere near the JSON output below.
+open_pr=""
+if [ -n "$branch" ] && command -v gh >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  gks_timeout=""
+  for gks_candidate in timeout gtimeout; do
+    if command -v "$gks_candidate" >/dev/null 2>&1; then
+      gks_timeout="$gks_candidate"
+      break
+    fi
+  done
+  if [ -n "$gks_timeout" ]; then
+    pr_json="$(cd "$project_dir" 2>/dev/null &&
+      GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 "$gks_timeout" 3 \
+        gh pr view --json number,url,state </dev/null 2>/dev/null)" || pr_json=""
+    if [ -n "$pr_json" ]; then
+      open_pr="$(printf '%s' "$pr_json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+if d.get("state") == "OPEN":
+    print("#%d %s" % (int(d["number"]), d["url"]))
+' 2>/dev/null | head -n 1)" || open_pr=""
+    fi
+  fi
+  case "$open_pr" in
+    *[!A-Za-z0-9\ \#:/._~%?=\&@+-]*) open_pr="" ;;
+    *" "*" "*) open_pr="" ;; # exactly one space: between the number and the URL
+    "#"[0-9]*" https://"*) ;;
+    *) open_pr="" ;;
+  esac
+fi
+
 # --- JSON-escape dynamic values BEFORE interpolation --------------------------------------------
 # Git permits `"` in branch names; unescaped it would emit malformed JSON and the whole
 # context injection would be silently dropped. Only the dynamic values are escaped -- the
@@ -122,6 +163,7 @@ json_escape() {
 }
 repo="$(json_escape "$repo")"
 branch="$(json_escape "$branch")"
+open_pr="$(json_escape "$open_pr")"
 
 # --- today's date, UTC -------------------------------------------------------------------------
 today="$(date -u +%Y-%m-%d)"
@@ -147,6 +189,7 @@ extractor="$(json_escape "$extractor")"
 context="gitian-kb session context:"
 [ -n "$repo" ] && context="${context}\n- repo: ${repo}"
 [ -n "$branch" ] && context="${context}\n- branch: ${branch}"
+[ -n "$open_pr" ] && context="${context}\n- open PR for this branch: ${open_pr}"
 context="${context}\n- date (UTC): ${today}"
 if [ -n "$transcript_path" ]; then
   context="${context}\n- transcript: ${transcript_path}"

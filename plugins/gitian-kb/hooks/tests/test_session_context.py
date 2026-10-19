@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -470,6 +471,160 @@ class PinnedLiteralsAndRobustness(SessionContextTestCase):
         proc = self.run_hook(self.envelope("startup", transcript_path=weird))
         self.assertEqual(proc.returncode, 0, msg="stderr=%r" % proc.stderr)
         json.loads(proc.stdout)  # must still parse
+
+
+class OpenPullRequestLine(SessionContextTestCase):
+    """The one `gh pr view` the hook makes: it names the branch's OPEN pull request and nothing
+    else, and every way it can go wrong leaves the line out without touching the rest of the
+    context. A fake `gh` earlier on PATH stands in for the real one, so no test needs a network, a
+    login or this checkout's own branch."""
+
+    BRANCH = "feat/pr-refs"
+    OPEN = '{"number":12,"state":"OPEN","url":"https://github.com/acme/api/pull/12"}'
+
+    def setUp(self):
+        super().setUp()
+        self.checkout = os.path.join(self.tmpdir, "checkout")
+        os.makedirs(self.checkout)
+        self.env["CLAUDE_PROJECT_DIR"] = self.checkout
+        self.bin_dir = os.path.join(self.tmpdir, "bin")
+        os.makedirs(self.bin_dir)
+        self.env["PATH"] = self.bin_dir + os.pathsep + self.env.get("PATH", "")
+        self.calls = os.path.join(self.tmpdir, "gh-calls.txt")
+
+    def git_init(self):
+        subprocess.run(
+            ["git", "init", "-q", "-b", self.BRANCH, self.checkout],
+            check=True,
+            capture_output=True,
+            env=self.env,
+        )
+
+    def fake_gh(self, body):
+        path = os.path.join(self.bin_dir, "gh")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write('#!/bin/sh\necho "$@" >> "%s"\n%s\n' % (self.calls, body))
+        os.chmod(path, 0o755)
+
+    def fake_gh_printing(self, payload):
+        self.fake_gh("printf '%%s' '%s'" % payload)
+
+    def context(self):
+        return self.context_of(self.run_hook(self.envelope("startup")), "startup")
+
+    def gh_was_called(self):
+        return os.path.exists(self.calls)
+
+    def assert_no_line_and_context_intact(self, context):
+        self.assertNotIn("open PR", context)
+        self.assertIn("- branch: %s" % self.BRANCH, context)
+        self.assertIn("kb-scribe", context)
+
+    def test_an_open_pr_is_named_with_its_number_and_url(self):
+        # Regression: without the line a brief has no PR to carry, and the scribe is left to guess
+        # one out of the branch name.
+        self.git_init()
+        self.fake_gh_printing(self.OPEN)
+        context = self.context()
+        self.assertIn(
+            "- open PR for this branch: #12 https://github.com/acme/api/pull/12", context
+        )
+        self.assertIn("- branch: %s" % self.BRANCH, context)
+        with open(self.calls, encoding="utf-8") as fh:
+            self.assertEqual(fh.read().strip(), "pr view --json number,url,state")
+
+    def test_a_merged_or_closed_pr_is_not_called_the_branchs_open_pr(self):
+        # Regression: `gh pr view` answers for a merged PR too; naming it as the open one would
+        # send the next brief at a PR that has already landed.
+        self.git_init()
+        for state in ("MERGED", "CLOSED"):
+            with self.subTest(state=state):
+                self.fake_gh_printing(
+                    '{"number":12,"state":"%s","url":"https://github.com/acme/api/pull/12"}' % state
+                )
+                self.assert_no_line_and_context_intact(self.context())
+
+    def test_a_failing_gh_leaves_the_line_out_silently(self):
+        # No PR for the branch, no login, no network: gh exits non-zero. The hook must not
+        # surface the error or lose the rest of the context.
+        self.git_init()
+        self.fake_gh("echo 'no pull requests found for branch' >&2; exit 1")
+        proc = self.run_hook(self.envelope("startup"))
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stderr, "")
+        self.assert_no_line_and_context_intact(self.context_of(proc, "startup"))
+
+    def test_unparseable_or_hostile_gh_output_is_dropped(self):
+        # Regression: the URL is interpolated into a JSON string, so a quote in it would drop the
+        # whole context injection. Anything that is not `#N https://…` of plain URL characters is
+        # not shown.
+        self.git_init()
+        for payload in (
+            "not json at all",
+            '{"number":"x","state":"OPEN","url":"https://github.com/a/b/pull/1"}',
+            '{"number":3,"state":"OPEN","url":"https://x.test/a\\"b"}',
+            '{"number":3,"state":"OPEN","url":"javascript:alert(1)"}',
+            '{"number":3,"state":"OPEN","url":"https://x.test/a b"}',
+        ):
+            with self.subTest(payload=payload):
+                self.fake_gh_printing(payload)
+                proc = self.run_hook(self.envelope("startup"))
+                self.assertEqual(proc.returncode, 0, msg="stderr=%r" % proc.stderr)
+                json.loads(proc.stdout)  # must still parse
+                self.assert_no_line_and_context_intact(self.context_of(proc, "startup"))
+
+    @unittest.skipUnless(
+        shutil.which("timeout") or shutil.which("gtimeout"), "needs a timeout binary"
+    )
+    def test_a_hanging_gh_is_cut_off_and_the_hook_still_answers(self):
+        # Regression: SessionStart blocks on this hook; a gh waiting on a dead network must cost
+        # a few seconds at most, never the session. (`exec` so the process that is killed is the
+        # sleep itself and no orphan holds the pipe open.)
+        self.git_init()
+        self.fake_gh("exec sleep 30")
+        started = time.monotonic()
+        proc = self.run_hook(self.envelope("startup"))
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 8, msg="hook took %.1fs with a hung gh" % elapsed)
+        self.assert_no_line_and_context_intact(self.context_of(proc, "startup"))
+
+    def test_outside_a_git_repo_gh_is_never_run(self):
+        # The checkout is a bare directory: no branch, so no network call for nothing.
+        self.fake_gh_printing(self.OPEN)
+        context = self.context()
+        self.assertNotIn("open PR", context)
+        self.assertFalse(self.gh_was_called())
+
+    def test_a_detached_head_has_no_branch_and_so_no_gh_call(self):
+        self.git_init()
+        git_env = dict(self.env, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.test",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.test")
+        empty_tree = subprocess.run(
+            ["git", "-C", self.checkout, "hash-object", "-t", "tree", "-w", "--stdin"],
+            input="", capture_output=True, text=True, check=True, env=git_env,
+        ).stdout.strip()
+        commit = subprocess.run(
+            ["git", "-C", self.checkout, "commit-tree", empty_tree, "-m", "x"],
+            capture_output=True, text=True, check=True, env=git_env,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "-C", self.checkout, "update-ref", "--no-deref", "HEAD", commit],
+            check=True, capture_output=True, env=git_env,
+        )
+        self.fake_gh_printing(self.OPEN)
+        context = self.context()
+        self.assertNotIn("open PR", context)
+        self.assertNotIn("- branch:", context)
+        self.assertFalse(self.gh_was_called())
+
+    def test_the_line_reaches_a_delegated_session_too(self):
+        # It is a derived line like repo and branch, which a subagent gets as well.
+        self.git_init()
+        self.fake_gh_printing(self.OPEN)
+        payload = self.envelope("startup", session_id="sess-sub")
+        payload["agent_id"] = "agent-123"
+        context = self.context_of(self.run_hook(payload), "startup")
+        self.assertIn("- open PR for this branch: #12 ", context)
 
 
 if __name__ == "__main__":

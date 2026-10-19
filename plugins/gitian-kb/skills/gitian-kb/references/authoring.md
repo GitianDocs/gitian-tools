@@ -422,6 +422,11 @@ How to write one well:
 
 ## Referencing pull requests: `[[pr:…]]` and `pr_refs`
 
+**Only on a server that teaches it.** Read `gitian-kb://format/doc` first: use what follows only
+when it has a *Referencing pull requests* section. An older server refuses `pr_refs` (its schemas
+are strict) and does not reserve `pr:`, so there a PR stays a plain URL in the body and a `pr`
+string on a doc, as before.
+
 Point an item at a pull request with a **PR reference**; a GitLab merge request is the same thing
 under `mr:`. Inline, wherever a sentence names one:
 
@@ -453,6 +458,13 @@ How to write one well:
 - **Take the PR from the brief.** A brief names PRs as `owner/name#N` on its `pr / commits` line
   (GitLab: `host/group/project!N`). Write each into `pr_refs`, and inline wherever the body discusses
   it. Never guess a number you were not given, and never fish one out of a branch name.
+- **Confirm it, then paste its `pr_ref`.** With the code tools connected (the gitian-docs plugin's
+  `gitian-code` server), `code_pr({ repo, number })` confirms a PR the brief names and returns
+  `pr_ref`, the complete wikilink, brackets included: paste it instead of typing the grammar. Its
+  title and state inform your sentence, they are never copied in. A card with no `pr_ref` (the
+  grammar cannot name the repository) gets no reference. `indexing` or `not_found` means the mirror
+  cannot say yet: write the reference from the brief and say in your report it is unconfirmed. The
+  number always comes from the brief; `code_prs` lists PRs, it does not choose one for you.
 - **The legacy `pr` field stays.** A doc's free-text `pr` (`owner/name#N`, a URL, several
   comma-separated) is still read, as are a `pr-<n>` tag and a `(#N)` ending a `commits` subject; a
   bare number resolves against the item's own `repo`. The server keeps the strongest source when a PR
