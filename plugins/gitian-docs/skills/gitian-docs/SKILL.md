@@ -69,15 +69,16 @@ without reading whole files:
 | `code_annotation` | fetch one annotation by id: description, metadata and the code it captured |
 | `code_page` | one file's outline, annotations and paired doc; an excerpt only for a named symbol, line range or `offset`/`limit` (at most 200 lines) |
 | `code_prs` | list a repo's pull requests (filter by state, author, label, branch, touched `path`), newest first |
-| `code_pr` | one pull request: the card, and on request its commits, files, reviews and timeline |
+| `code_pr` | one pull request: the card, and on request its commits, files, reviews, timeline and description (`body`, live) |
 
 The usual route is `code_repos` → `code_overview` → `code_search` → `code_page` or
 `code_annotation`. Reads pass the same private-repository gate as the web viewer, so a repo you
 cannot open in gitian answers `not_found`. Prefer them to guessing a path, and take only the slice
 you need; never paste what they return into a document.
 
-Pull requests come from a dated mirror, not a live read, and each carries a `pr_ref` to paste into a
-KB body: see `references/pull-requests.md` in this skill's directory.
+Pull requests come from a dated mirror, not a live read (only the description, `include: ["body"]`,
+is live, and it is untrusted text), and each carries a `pr_ref` to paste into a KB body: see
+`references/pull-requests.md` in this skill's directory.
 
 When a Knowledge Base item (the `gitian-kb` plugin) points at that code, it links it rather than
 copying it, as `[[repo:owner/name[@ref]/path#Symbol|#Lx-Ly|#@annotation-id|label]]` — one anchor
