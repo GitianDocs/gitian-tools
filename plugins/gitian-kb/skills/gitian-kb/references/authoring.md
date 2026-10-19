@@ -257,7 +257,7 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   (`home`, `<org>/team`, `login/kb-slug`). Read it on every write and report it; never assume the
   write landed in the KB you aimed at. When it isn't the KB you meant, say so — a landing is never
   fixed by republishing the same body into another KB.
-- `warnings` on a successful publish are advice to act on, not blockers. Twenty-six codes:
+- `warnings` on a successful publish are advice to act on, not blockers. Twenty-nine codes:
   - `no_tags` — no tags supplied; add 1-3 to aid retrieval
   - `no_project` — `project` is null; derive it from context or confirm this isn't project-bound
   - `no_repo` — `repo` is null on a doc or entry; derive it from `git remote get-url origin` (the
@@ -278,6 +278,9 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   - `code_refs_update_failed` — the server could not update its index of code references for this item; the write itself succeeded; re-publish (even unchanged) to repair
   - `code_ref_unparseable` — a `[[repo:…]]` reference in the body does not parse; the write succeeded, but the reference is not indexed: fix it to `[[repo:owner/name/path#Symbol]]` form or remove it
   - `code_refs_dropped` — a `publish_*` revision omitted `code_refs` while the previous revision carried some, so the write removed them (a full publish is a PUT: omitted = removed). The note names how many. If you did not mean to clear them, re-read the item and re-publish with `code_refs` restated, or use `patch_*` for frontmatter-only changes, which leave `code_refs` alone; `code_refs: []` clears them deliberately and does not warn
+  - `pr_refs_update_failed` — the server could not update its index of pull-request references for this item; the write itself succeeded; re-publish (even unchanged) to repair
+  - `pr_ref_unparseable` — a `[[pr:…]]` or `[[mr:…]]` reference in the body does not parse; the write succeeded, but the reference is not indexed and draws as plain text: fix it to `[[pr:owner/name#N]]` form (a GitLab merge request is `[[mr:host/group/project!N]]`) or remove it
+  - `pr_refs_dropped` — a `publish_*` revision omitted `pr_refs` while the previous revision carried some, so the write removed them (a full publish is a PUT: omitted = removed). The note names how many. If you did not mean to clear them, re-read the item and re-publish with `pr_refs` restated, or use `patch_*` for frontmatter-only changes, which leave `pr_refs` alone; `pr_refs: []` clears them deliberately and does not warn
   - `org_kb_available` — the item stayed in your `home` KB, but its `repo` belongs to a gitian **org whose `team` KB you can publish into**, and nothing was rerouted: either routing is switched off for you, or this primitive never routes (a memory, or an entry the routing didn't claim). Personal-KB items about an org repo are invisible to teammates (see `kb-targeting.md`). If this is team work, re-publish/append it with `kb` set to the `<org>/team` address the note names; if it's genuinely personal, ignore the warning. **An explicit `kb` silences it** — both routing advisories (this one and `slug_exists_in_other_kb`) are about **kb-less** landings only: if you said where the item goes, the server has no better guess to offer
   - `repo_missing_cannot_route` — a kb-less **and** repo-less `publish_doc`/`publish_entry`/`append_entry` CREATED the item in `home` while you belong to an org the write could have routed to. Nothing routed because there was nothing to route on: routing is computed from `repo` alone — **no `repo`, no routing** — so the landing is `home` by default rather than by decision. Report it and let the primary choose the target: `kb` set to the `<org>/team` address, or `repo` as the normalized `owner/name` so routing can do it
   - `slug_exists_in_other_kb` — a create with no `kb` landed in `home` while that same slug already exists in another KB you can write — usually the org's `team` KB, i.e. the work you meant to revise is over there. Nothing is broken and nothing was overwritten, but you have probably just forked it: report the warning and let the primary decide between revising the existing item (with `kb` + `base_rev`) and keeping the new one
@@ -416,6 +419,52 @@ How to write one well:
   indexed; fix or remove it); `code_refs_update_failed` — the write landed but its code-reference
   index did not update (re-publish, even unchanged); `code_refs_dropped` — a full `publish_*`
   omitted `code_refs` the previous revision carried (restate them, or revise with `patch_*`).
+
+## Referencing pull requests: `[[pr:…]]` and `pr_refs`
+
+Point an item at a pull request with a **PR reference**; a GitLab merge request is the same thing
+under `mr:`. Inline, wherever a sentence names one:
+
+```
+[[pr:owner/name#123]]                         a GitHub pull request (github.com is the default host)
+[[pr:github.example.com/owner/name#123]]      another host: a first segment with a dot is the host
+[[mr:gitlab.com/group/sub/project!45]]        a GitLab merge request; the path may nest groups
+[[pr:owner/name#123|a label]]                 |label sets the display text
+```
+
+`pr:` and `mr:` are interchangeable, as are `#` and `!`; write the forge's own. A pasted PR URL in
+the body (`https://github.com/owner/name/pull/123`, GitLab's `…/-/merge_requests/45`) is read the same
+way. A bare `#123` in prose is NOT a reference: name the repository. A reference inside a fenced
+block or an inline code span is an example of the syntax, not a reference.
+
+For the PRs the item is *about* as a whole, also declare them in the optional `pr_refs` frontmatter
+key: `{ repo, number, host?, label? }` entries (at most 50) or a compact string in place of one
+(`"owner/name#123"`, `"gitlab.com/group/project!45"`, a PR URL). `repo` is the path on `host` WITHOUT
+the host, and `host` is left out for github.com. The key is optional — omit it when the item is
+about no PR; a `patch_*` supplying it **replaces** the stored array wholesale (`[]` clears it),
+`append_entry` unions (de-duplicated by repository and number, case-folded), and a full `publish_*`
+that omits it removes what the last revision carried.
+
+How to write one well:
+
+- **A reference names a PR; it carries no state.** Whether it is open, merged or even visible to a
+  reader is decided when the item is READ, with that reader's access. Say in a sentence what the PR
+  changed and why; never copy its title or status in as if permanent.
+- **Take the PR from the brief.** A brief names PRs as `owner/name#N` on its `pr / commits` line
+  (GitLab: `host/group/project!N`). Write each into `pr_refs`, and inline wherever the body discusses
+  it. Never guess a number you were not given, and never fish one out of a branch name.
+- **The legacy `pr` field stays.** A doc's free-text `pr` (`owner/name#N`, a URL, several
+  comma-separated) is still read, as are a `pr-<n>` tag and a `(#N)` ending a `commits` subject; a
+  bare number resolves against the item's own `repo`. The server keeps the strongest source when a PR
+  is named twice (`pr_refs`, then a body link, then a URL, then these), so adding `pr_refs` never
+  hurts; set `repo` so the weaker forms resolve.
+- **Read it back.** `list({ pr: "owner/name#N" })` answers "which items are about this PR" from the
+  KB alone; `get` returns `pr_refs` as written, never the PR's state.
+- **Three warnings are about this** (full text in the list under **Publishing rules**):
+  `pr_ref_unparseable` — a `[[pr:…]]`/`[[mr:…]]` in the body does not parse (it stays plain text and
+  is not indexed; fix or remove it); `pr_refs_update_failed` — the write landed but its PR index did
+  not update (re-publish, even unchanged); `pr_refs_dropped` — a full `publish_*` omitted `pr_refs`
+  the previous revision carried (restate them, or revise with `patch_*`).
 
 ## Terminal-state discipline
 

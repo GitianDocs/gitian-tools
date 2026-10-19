@@ -63,11 +63,11 @@ Required every time — the scribe has no cwd and no conversation:
 - **project / files** — the `project`, and the paths a plan or code-shaped doc will touch
   (`files`), else no file intents at all
 - **what happened, and the decisions *with the why*** — only you have it. Tool results never
-  reach the scribe: a finding from a log or query output goes in the brief
+  reach the scribe: a log or query finding goes in the brief
 
 Whatever else applies: **target slug** (revising, retracting, merging — survivor **and** duplicate
 for a dedupe); **rejected alternatives**; **status / impl_status** — state a terminal flip or
-retraction explicitly, the scribe infers neither; **pr / commits**; **topics to mint** — only a
+retraction explicitly, the scribe infers neither; **pr / commits** (`owner/name#N`); **topics to mint** — only a
 genuinely new concept; **snags hit** — sweep material; **transcript + transcript-extract** — both session-context lines when the
 conversation holds the substance.
 

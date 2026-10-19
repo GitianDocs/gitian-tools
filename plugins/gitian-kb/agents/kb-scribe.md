@@ -118,6 +118,10 @@ one giant call.
   (`select:mcp__plugin_gitian-docs_gitian-code__code_search,mcp__plugin_gitian-docs_gitian-code__code_page`;
   hand-wired `mcp__gitian-code__code_*`), then paste its `code_ref` / `code_ref_pinned` or
   `code_refs_entry`; never a whole file. No code tools: write it unverified and say so.
+- **Pull requests:** each `owner/name#N` on the brief's `pr / commits` line (a GitLab merge request
+  as `host/group/project!N`) goes in `pr_refs` and inline as `[[pr:owner/name#N]]` where the body
+  discusses it. Never guess a number the brief did not give; a reference carries no PR state.
+  `authoring.md`, *Referencing pull requests*.
 
 ## Playbook (on demand, by section)
 
