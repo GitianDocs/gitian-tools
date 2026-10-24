@@ -1,5 +1,5 @@
 {
-  "description": "gitian-kb: SessionStart hook injecting repo/branch/date/transcript context and the delegation directive (dispatch kb-librarian to orient, brief kb-scribe to publish, never auto-publish), plus a client-side nudge layer (keyed to the KB server's tools only, never the gitian-code server's) -- a passive observation cache harvested from MCP traffic feeding advisory, once-per-session, fail-open nudges (orientation check, publish lint, commit journaling, stop publish-reminder, mint follow-up, plugin-update nudge + auto-update hint), plus one stateless precondition -- the routing guard, which refuses a doc/journal-entry write -- standalone or inside a `batch_write` operation -- carrying neither `kb` nor `repo` inside a GitHub checkout, since such a write can only land in `home`. A subagent's MCP traffic is harvested under the parent's session id, so the agents' own work quiets these nudges. A fully compliant session sees zero nudge output.",
+  "description": "gitian-kb: SessionStart hook injecting repo/branch/date/transcript context and the delegation directive (dispatch kb-librarian to orient, brief kb-scribe to publish, never auto-publish), plus a client-side nudge layer (keyed to the KB server's tools only, never the gitian-code server's) -- a passive observation cache harvested from MCP traffic feeding advisory, fail-open nudges (orientation check, publish lint, mint follow-up, plugin-update nudge + auto-update hint) and an activity ledger evaluated only at checkpoints (a turn-end block for completion points: first work, merges and releases at most every 30 min; context on the user's next prompt for the rest, no extra turn; resume/compact/clear lines), plus one stateless precondition -- the routing guard, which refuses a doc/journal-entry write -- standalone or inside a `batch_write` operation -- carrying neither `kb` nor `repo` inside a GitHub checkout, since such a write can only land in `home`. A subagent's MCP traffic is harvested under the parent's session id, so the agents' own work quiets these nudges. A fully compliant session sees zero nudge output.",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,18 @@
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/session-context.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/prompt-checkpoint.sh\"",
             "timeout": 5
           }
         ]
@@ -43,6 +55,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task|SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/brief-watch.sh\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -61,7 +83,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/commit-nudge.sh\"",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/bash-activity.sh\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Task|SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/brief-watch.sh\"",
             "timeout": 5
           }
         ]

@@ -10,7 +10,9 @@ assert on the STATIC context, which must not depend on the checkout the suite ha
 State is seeded by writing a full v1-shaped JSON document directly to that path (same approach as
 test_state.py's SevenDayPruning fixture) rather than shelling out to state.py -- these tests care
 about exact seed shapes (a specific vocabRev/lastSeenVocabRev pairing, a specific updatedAt age),
-which is clearer written as a literal dict than composed through incr/merge calls.
+which is clearer written as a literal dict than composed through incr/merge calls. The activity
+ledger the resume / compact / clear text is built from (ledger.py) is seeded the same way, with
+timestamps relative to the real clock because the hook reads it.
 
 Runnable directly: python3 plugins/gitian-kb/hooks/tests/test_session_context.py
 """
@@ -29,6 +31,10 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent.parent
 SESSION_CONTEXT_SH = HOOKS_DIR / "session-context.sh"
 STATE_PY = HOOKS_DIR / "state.py"
+
+sys.path.insert(0, str(HOOKS_DIR))
+
+import ledger as ledger_mod  # noqa: E402  (the module the hook records into lives one directory up)
 
 SERVER_KEY = "https://gitian.dev/api/mcp/kb"  # default GITIAN_KB_URL, per the state contract
 
@@ -86,6 +92,31 @@ def _last_seen(rev):
     _SESSION_DEFAULTS): a single (SERVER_KEY, "home") observation -- the default bucket every
     reader/writer in this plugin falls back to (see session_digest.py's DEFAULT_KB_SLUG)."""
     return {SERVER_KEY: {"home": rev}}
+
+
+def _ago(**delta):
+    return _iso(datetime.now(timezone.utc) - timedelta(**delta))
+
+
+def _commit(minutes_ago, repo="acme/api", ref="abc1234", text="wire the thing"):
+    return {
+        "at": _ago(minutes=minutes_ago),
+        "kind": "commit",
+        "repo": repo,
+        "ref": ref,
+        "text": text,
+    }
+
+
+def _watch_entry(repo="acme/web", number=7):
+    return {"repo": repo, "number": number, "why": "opened", "addedAt": _ago(hours=1)}
+
+
+def _ledger_session(events=(), edits=(), nudges=None, watch=(), **ledger_fields):
+    """A session whose activity ledger holds the given events / edit buckets (ledger.py shapes)."""
+    ledger = {"events": list(events), "edits": list(edits)}
+    ledger.update(ledger_fields)
+    return _session_defaults(ledger=ledger, nudges=dict(nudges or {}), watch=list(watch))
 
 
 class SessionContextTestCase(unittest.TestCase):
@@ -424,6 +455,203 @@ class ResumeProfile(SessionContextTestCase):
         self.assertEqual(state["sessions"]["sess-r6"]["lastSeenVocabRev"][SERVER_KEY]["home"], 9)
 
 
+class LedgerCarryOver(SessionContextTestCase):
+    """The activity ledger (ledger.py) at SessionStart: a session coming back (resume), squashed
+    (compact) or about to be emptied (clear) is told what no KB write covers yet, and only when
+    something qualifying is really open. startup says nothing of it, and a delegated session hears
+    nothing and changes nothing."""
+
+    SID = "sess-l"
+    TRANSCRIPT = "/tmp/gks-session-transcript.jsonl"  # never opened, only named in the text
+
+    def seed_open(self, **fields):
+        """A session with one commit three hours old that nothing covers."""
+        self.seed_state(sessions={self.SID: _ledger_session(events=[_commit(180)], **fields)})
+
+    def session(self):
+        return self.dump_state()["sessions"][self.SID]
+
+    def start(self, source, **payload_extra):
+        payload = self.envelope(source, session_id=self.SID)
+        payload.update(payload_extra)
+        return self.context_of(self.run_hook(payload), source)
+
+    def assert_just_now(self, stamp):
+        parsed = ledger_mod.parse_iso(stamp)
+        self.assertIsNotNone(parsed, msg="not a timestamp: %r" % (stamp,))
+        self.assertLess(abs((datetime.now(timezone.utc) - parsed).total_seconds()), 120)
+
+    def test_resume_lists_the_open_activity_and_asks_for_one_brief(self):
+        self.seed_open()
+        context = self.start("resume")
+        head = context.index("gitian-kb: resumed with activity since ")
+        line = context.index("- acme/api: 1 commit")
+        tail = context.index(
+            "If any of it clears the bar, brief kb-scribe (background) from this list."
+        )
+        self.assertLess(head, line)
+        self.assertLess(line, tail)
+        self.assertIn("that no KB write covers yet:\n- acme/api", context)
+        self.assertIn("abc1234", context)
+        self.assertNotIn("before /clear", context)
+        self.assertNotIn("fold it into that handoff brief", context)
+
+        session = self.session()
+        self.assert_just_now(session["nudges"]["at"])
+        self.assertEqual(len(session["ledger"]["events"]), 1)  # resume reports, it never resets
+
+    def test_compact_lists_it_right_after_the_handoff_directive(self):
+        self.seed_open()
+        context = self.start("compact")
+        directive = context.index("type: handoff")
+        head = context.index("Activity since ")
+        self.assertLess(directive, head)
+        self.assertIn(
+            " that no KB write covers yet -- fold it into that handoff brief:"
+            "\n- acme/api: 1 commit",
+            context,
+        )
+        self.assertNotIn("If any of it clears the bar", context)
+        self.assertNotIn("before /clear", context)
+
+        session = self.session()
+        self.assert_just_now(session["nudges"]["at"])
+        self.assertEqual(len(session["ledger"]["events"]), 1)
+
+    def test_clear_names_it_once_with_the_transcript_and_starts_the_ledger_over(self):
+        self.seed_open(
+            watch=[_watch_entry()],
+            transcript=self.TRANSCRIPT,
+            scribeIds=["scribe-id-1"],
+            briefAt=_ago(minutes=100),  # long past its grace: the commit is still owed
+            dropped=3,
+        )
+        context = self.start("clear")
+        self.assertIn("gitian-kb: before /clear, this session left activity since ", context)
+        self.assertIn(" that no KB write covers:\n- acme/api: 1 commit", context)
+        self.assertIn(
+            "If any of it matters, brief kb-scribe (background) with the transcript %s."
+            % self.TRANSCRIPT,
+            context,
+        )
+
+        session = self.session()
+        ledger = session["ledger"]
+        self.assertEqual(ledger["events"], [])
+        self.assertEqual(ledger["edits"], [])
+        self.assertEqual(ledger["dropped"], 0)
+        self.assertNotIn("briefAt", ledger)
+        self.assert_just_now(ledger["checkpointAt"])
+        # What survives: the scribes this session knows, the transcript, and the pull requests
+        # being watched -- one open before /clear is still open after it.
+        self.assertEqual(ledger["scribeIds"], ["scribe-id-1"])
+        self.assertEqual(ledger["transcript"], self.TRANSCRIPT)
+        self.assertEqual([(w["repo"], w["number"]) for w in session["watch"]], [("acme/web", 7)])
+        self.assert_just_now(session["nudges"]["at"])
+        self.assertEqual(session["epoch"], 1)  # the epoch bump still runs first
+
+        # Said once: the ledger starts over, so a second /clear has nothing left to name.
+        self.assertNotIn("before /clear", self.start("clear"))
+
+    def test_clear_without_a_recorded_transcript_drops_that_clause(self):
+        self.seed_open()
+        context = self.start("clear")
+        self.assertIn("If any of it matters, brief kb-scribe (background).", context)
+        self.assertNotIn("with the transcript", context)
+
+    def test_nothing_open_means_nothing_said_and_nothing_changed(self):
+        stamp = _ago(minutes=9)
+        two_edits = [{"min": stamp[:16], "at": stamp, "n": 2, "repo": "acme/api"}]
+        quiet = {
+            "an empty ledger": {},
+            "covered by a write": {"events": [_commit(180)], "checkpointAt": _ago(minutes=5)},
+            "covered by a brief": {"events": [_commit(20)], "briefAt": _ago(minutes=5)},
+            "information only": {
+                "events": [
+                    {"at": _ago(minutes=30), "kind": "pr", "repo": "acme/api", "ref": "#7"},
+                    {"at": _ago(minutes=20), "kind": "ruling", "text": "Never merge with --auto."},
+                    {"at": _ago(minutes=10), "kind": "release", "repo": "acme/api", "ref": "v1",
+                     "draft": True},
+                ],
+                "edits": two_edits,
+            },
+        }
+        for label, fields in quiet.items():
+            for source in ("resume", "compact", "clear"):
+                with self.subTest(ledger=label, source=source):
+                    self.seed_state(sessions={self.SID: _ledger_session(**fields)})
+                    before = self.session()
+                    context = self.start(source)
+                    for fragment in ("no KB write covers", "fold it into", "before /clear"):
+                        self.assertNotIn(fragment, context)
+                    after = self.session()
+                    self.assertEqual(after["ledger"], before["ledger"])  # clear did not reset it
+                    self.assertEqual(after["nudges"], {})
+
+    def test_startup_and_unknown_sources_say_nothing_of_it(self):
+        for source in ("startup", "some-future-source"):
+            with self.subTest(source=source):
+                self.seed_open()
+                before = self.session()
+                context = self.start(source)
+                for fragment in ("no KB write covers", "fold it into", "before /clear"):
+                    self.assertNotIn(fragment, context)
+                after = self.session()
+                self.assertEqual(after["ledger"], before["ledger"])
+                self.assertEqual(after["nudges"], {})
+
+    def test_the_vocab_and_staleness_lines_survive_beside_it(self):
+        session = _ledger_session(events=[_commit(13 * 60)])
+        session.update(lastSeenVocabRev=_last_seen(5), updatedAt=_ago(hours=13))
+        self.seed_state(
+            servers={SERVER_KEY: {"vocabRev": 9, "topics": [_topic("kb", "d", 1)]}},
+            sessions={self.SID: session},
+        )
+        context = self.start("resume")
+        self.assertIn("vocab_rev 5 -> 9", context)
+        self.assertIn("running record", context)
+        self.assertLess(
+            context.index("resumed with activity since"), context.index("KB vocabulary moved")
+        )
+
+    def test_a_delegated_session_hears_nothing_and_changes_nothing(self):
+        for field, value in (("agent_id", "agent-123"), ("agent_type", "kb-scribe")):
+            for source in ("startup", "resume", "clear", "compact"):
+                with self.subTest(field=field, source=source):
+                    self.seed_open(watch=[_watch_entry()])
+                    before = self.session()
+                    context = self.start(source, **{field: value})
+                    for fragment in ("no KB write covers", "fold it into", "before /clear"):
+                        self.assertNotIn(fragment, context)
+                    after = self.session()
+                    for key in ("ledger", "nudges", "watch"):
+                        self.assertEqual(after[key], before[key], msg=key)
+
+    def test_the_nudge_mark_leaves_the_next_checkpoint_only_what_is_new(self):
+        self.seed_open()
+        self.start("resume")
+        session = self.session()
+        now = ledger_mod.utcnow()
+        self.assertTrue(ledger_mod.has_open_qualifying(session, now))  # still owed ...
+        # ... but not announced again.
+        self.assertFalse(ledger_mod.checkpoint_due(session, now, at_prompt=True))
+
+    def test_text_from_git_cannot_break_the_json(self):
+        # Commit subjects and PR titles are somebody else's text; a backslash or a quote in one
+        # must reach the model intact (or tamed) and never corrupt the hook's JSON.
+        nasty = 'fix C:\\temp\\new "quoted" \\n literal'
+        self.seed_state(
+            sessions={
+                self.SID: _ledger_session(
+                    events=[_commit(180, text=nasty)], transcript='/tmp/we"ird\\path.jsonl'
+                )
+            }
+        )
+        context = self.start("clear")  # context_of parses the whole output as JSON
+        self.assertIn(nasty.replace('"', "'"), context)
+        self.assertIn('/tmp/we"ird\\path.jsonl', context)
+
+
 class PinnedLiteralsAndRobustness(SessionContextTestCase):
     def test_every_source_is_valid_json_with_pinned_literals(self):
         self.seed_state(servers={SERVER_KEY: {"vocabRev": 1, "topics": [_topic("kb", "d", 1)]}})
@@ -625,6 +853,74 @@ class OpenPullRequestLine(SessionContextTestCase):
         payload["agent_id"] = "agent-123"
         context = self.context_of(self.run_hook(payload), "startup")
         self.assertIn("- open PR for this branch: #12 ", context)
+
+    # --- the watch: the open PR is polled later, because a merge leaves no local command ------
+
+    def watch_of(self, sid):
+        return self.dump_state().get("sessions", {}).get(sid, {}).get("watch", [])
+
+    def test_the_open_pr_goes_on_the_watch_on_every_source(self):
+        self.git_init()
+        self.fake_gh_printing(self.OPEN)
+        for source in ("startup", "resume", "clear", "compact"):
+            with self.subTest(source=source):
+                sid = "sess-w-%s" % source
+                self.context_of(self.run_hook(self.envelope(source, session_id=sid)), source)
+                [entry] = self.watch_of(sid)
+                self.assertEqual(
+                    (entry["repo"], entry["number"], entry["why"]), ("acme/api", 12, "branch")
+                )
+                self.assertIsNotNone(ledger_mod.parse_iso(entry["addedAt"]))
+                self.assertNotIn("polledAt", entry)  # never polled yet: the first Stop will
+
+    def test_a_pr_already_on_the_watch_is_not_added_again(self):
+        self.git_init()
+        self.fake_gh_printing(self.OPEN)
+        self.context()
+        self.context()
+        self.assertEqual(len(self.watch_of("sess-1")), 1)
+
+    def test_no_open_pr_means_no_watch_and_no_state_write(self):
+        self.git_init()
+        for state in ("MERGED", "CLOSED"):
+            self.fake_gh_printing(
+                '{"number":12,"state":"%s","url":"https://github.com/acme/api/pull/12"}' % state
+            )
+            self.context()
+        self.fake_gh("exit 1")
+        self.context()
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_only_a_github_pull_request_url_is_watched(self):
+        self.git_init()
+        for payload in (
+            '{"number":3,"state":"OPEN","url":"https://x.test/acme/api/pull/3"}',
+            '{"number":3,"state":"OPEN","url":"https://x.test/a b"}',
+            '{"number":3,"state":"OPEN","url":"javascript:alert(1)"}',
+            "not json at all",
+        ):
+            with self.subTest(payload=payload):
+                self.fake_gh_printing(payload)
+                self.context_of(self.run_hook(self.envelope("startup")), "startup")
+                self.assertFalse(os.path.exists(self.state_file))
+
+    def test_a_delegated_session_puts_nothing_on_the_watch(self):
+        self.git_init()
+        self.fake_gh_printing(self.OPEN)
+        payload = self.envelope("startup", session_id="sess-sub")
+        payload["agent_id"] = "agent-123"
+        self.context_of(self.run_hook(payload), "startup")
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_the_watch_and_the_ledger_text_arrive_together(self):
+        self.git_init()
+        self.fake_gh_printing(self.OPEN)
+        self.seed_state(sessions={"sess-1": _ledger_session(events=[_commit(180)])})
+        context = self.context_of(self.run_hook(self.envelope("resume")), "resume")
+        self.assertIn("resumed with activity since", context)
+        session = self.dump_state()["sessions"]["sess-1"]
+        self.assertEqual([(w["repo"], w["number"]) for w in session["watch"]], [("acme/api", 12)])
+        self.assertIn("at", session["nudges"])
 
 
 if __name__ == "__main__":

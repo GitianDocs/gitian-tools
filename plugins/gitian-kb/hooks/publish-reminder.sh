@@ -1,8 +1,11 @@
 #!/bin/sh
-# publish-reminder.sh -- Stop hook for the gitian-kb plugin: nudge once per session when file
-# edits or a commit happened with nothing published to the gitian KB (pinned decision 4).
+# publish-reminder.sh -- Stop hook for the gitian-kb plugin: the completion checkpoint. At a turn
+# end it polls the session's watched pull requests for a merge (pr_poll.py) and blocks, once, with
+# a list of the activity no KB write covers yet -- but only at a completion point (the session's
+# first work, a merge, a release; ledger.py decides), because a block costs a whole extra turn.
+# Everything else waits for the next prompt's context line (prompt-checkpoint.sh).
 #
-# All JSON/transcript handling happens in one python3 invocation; this script never reads stdin
+# All JSON/state handling happens in one python3 invocation; this script never reads stdin
 # itself -- it runs publish_reminder.py as a child process (not `exec`, so this script's own
 # `exit 0` below still runs after) with stdin passed straight through, unread and unmodified
 # (mirrors harvest.sh).

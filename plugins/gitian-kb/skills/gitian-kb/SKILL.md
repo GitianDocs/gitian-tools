@@ -92,6 +92,6 @@ spec/plan/design *requests*, **gitian-docs** annotations.
 
 ## The nudge layer
 
-Hooks nudge off harvested MCP traffic — advisory, fail-open, **silent when compliant**, satisfied
-by a brief you dispatched; `/gitian-kb:status` inspects them. One is a hard precondition: a doc or
-journal-entry write carrying neither `kb` nor `repo` is refused, since it could only land in `home`.
+Hooks nudge at checkpoints and re-arm on new activity: advisory, **silent when compliant**, quieted
+by a dispatched brief; a nudge lists what is unwritten, by repo. `/gitian-kb:status` shows them. A
+doc or journal-entry write with neither `kb` nor `repo` is refused: it could only land in `home`.

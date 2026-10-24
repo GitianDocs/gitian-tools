@@ -1,5 +1,6 @@
 #!/bin/sh
-# lib-state.sh -- POSIX-sh wrappers around state.py, the gitian-kb nudge layer's state substrate.
+# lib-state.sh -- POSIX-sh wrappers around state.py, the gitian-kb nudge layer's state substrate
+# (and, for gks_record_edit, around ledger.py, its activity ledger).
 #
 # Sourced (never executed) from a hook script living in this same hooks/ directory, via the
 # script-dir pattern:
@@ -10,12 +11,13 @@
 # hooks.json, e.g. `sh "${CLAUDE_PLUGIN_ROOT}/hooks/foo.sh"`); it is not safe to source this from
 # a script living elsewhere. Never rely on CLAUDE_PLUGIN_ROOT here (see hook idiom notes).
 #
-# Sourcing this file has no side effects beyond defining _gks_state_py/functions below -- it
-# touches no state, prints nothing, and runs no state.py subcommand until a wrapper is called.
+# Sourcing this file has no side effects beyond defining _gks_state_py/_gks_ledger_py/functions
+# below -- it touches no state, prints nothing, and runs no state.py or ledger.py subcommand until a
+# wrapper is called.
 #
-# Every wrapper is fail-open: state.py itself never exits non-zero or prints on error, and each
-# wrapper additionally guards missing args / a missing state.py so a caller can invoke these
-# without checking anything and always keep going.
+# Every wrapper is fail-open: state.py and ledger.py themselves never exit non-zero or print on
+# error, and each wrapper additionally guards missing args / a missing script so a caller can invoke
+# these without checking anything and always keep going.
 # "CDPATH= cd" below is a deliberate prefix assignment (clear CDPATH only for this `cd`, per the
 # contract's script-dir pattern), not a mistyped var assignment.
 # shellcheck disable=SC1007
@@ -23,6 +25,10 @@ _gks_lib_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || _gks_li
 _gks_state_py=""
 if [ -n "$_gks_lib_dir" ] && [ -f "$_gks_lib_dir/state.py" ]; then
   _gks_state_py="$_gks_lib_dir/state.py"
+fi
+_gks_ledger_py=""
+if [ -n "$_gks_lib_dir" ] && [ -f "$_gks_lib_dir/ledger.py" ]; then
+  _gks_ledger_py="$_gks_lib_dir/ledger.py"
 fi
 
 # gks_state_file -- print the resolved state file path (mirrors state.py's own resolution).
@@ -61,6 +67,17 @@ gks_incr() {
   else
     python3 "$_gks_state_py" incr "$_gks_sid" "$_gks_counter" 2>/dev/null
   fi
+  return 0
+}
+
+# gks_record_edit SID [PATH] -- count one file edit in the session's activity ledger, attributed to
+# the repo PATH lives in (an absolute path; empty = unattributed), and bump the legacy
+# sessions.SID.edits counter with it (`ledger.py edit`). Silent.
+gks_record_edit() {
+  _gks_sid="${1:-}"
+  _gks_path="${2:-}"
+  [ -n "$_gks_sid" ] && [ -n "$_gks_ledger_py" ] || return 0
+  python3 "$_gks_ledger_py" edit "$_gks_sid" "$_gks_path" 2>/dev/null
   return 0
 }
 

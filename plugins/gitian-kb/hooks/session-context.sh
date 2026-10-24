@@ -42,7 +42,8 @@
 #     to (a compaction handoff above all) only produced a session trying to do something it has no
 #     tool for. It gets the inline-work line, the markup rule and the derived lines instead, and
 #     no source-profile tail (whose resume line also points at kb-librarian, and whose stamping
-#     would record the parent's session as having seen a vocabulary it never read).
+#     would record the parent's session as having seen a vocabulary it never read) -- which also
+#     means no ledger lines and no watch entry (below).
 #   - a source-profile tail computed against the shared nudge state (see state.py), delegated to
 #     session_digest.py: on resume, zero/one/two lines noting a moved vocab revision and/or a
 #     stale (>12h) session record. There is deliberately NO vocab digest on startup/clear/compact
@@ -50,6 +51,17 @@
 #     primary bought nothing. resume never bumps the session epoch, so flags survive it; clear
 #     bumps the epoch first (gks_bump_epoch, re-arming every once-per-epoch nudge) before
 #     anything below is built. An unrecognized/missing source is treated like startup.
+#   - the activity ledger (ledger.py), through the same session_digest.py call: when this session's
+#     ledger holds open activity that no KB write covers (a commit, a merge, a release, enough
+#     edits), resume lists it and asks for a brief from the list, compact lists it right after the
+#     handoff directive above ("fold it into that handoff brief"), and clear names it once -- with
+#     the transcript to brief from -- before the ledger starts over. Each marks the nudge, so the
+#     next checkpoint reports only what is new; nothing open, nothing said. The ledger and the
+#     watch survive the epoch bump above. startup says nothing about it.
+#   - the branch's open PR goes on the session's WATCH, on every non-delegated source: the URL half
+#     of the open-PR line is session_digest.py's optional third argument. A pull request merged
+#     on GitHub, by auto-merge or by a person, leaves no local command for any hook to see; the Stop
+#     checkpoint polls the watch instead.
 #
 # Must be fast and silent-safe: plain git plumbing plus the one bounded `gh` call above, always
 # exits 0. The source-profile tail is best-effort layered on top -- a missing python3, a missing
@@ -164,6 +176,9 @@ json_escape() {
 repo="$(json_escape "$repo")"
 branch="$(json_escape "$branch")"
 open_pr="$(json_escape "$open_pr")"
+# The URL half of "#N https://..." (validated above to exactly one space), for the watch below.
+pr_url=""
+[ -n "$open_pr" ] && pr_url="${open_pr#* }"
 
 # --- today's date, UTC -------------------------------------------------------------------------
 today="$(date -u +%Y-%m-%d)"
@@ -210,15 +225,16 @@ if [ "$start_source" = "compact" ] && [ -z "$delegated" ]; then
   context="${context}\n\nA compaction just squashed this conversation. Before continuing the task, brief \`kb-scribe\` for a \`type: handoff\` doc -- pass the transcript lines above -- capturing current state, decisions in flight, and next steps, written so a fresh agent could resume from it alone."
 fi
 
-# --- source-profile tail: on resume, the vocab-delta and/or staleness lines (nothing at all on
-# startup/clear/compact since the vocab digest was retired), plus -- on EVERY source -- recording
-# that this session has now seen the cache's vocab revision --
+# --- source-profile tail: on resume, the vocab-delta and/or staleness lines (no vocab digest on any
+# source since it was retired), the ledger's open activity on resume/compact/clear, plus -- on
+# EVERY source -- recording that this session has now seen the cache's vocab revision and putting
+# the branch's open PR on the watch (the third argument) --
 # delegated to session_digest.py (see its docstring for the exact contract). Best-effort: any
 # failure here (missing python3/script, corrupt state, anything) just leaves the tail empty;
 # nothing built above is affected.
 extra=""
 if [ -z "$delegated" ] && [ -n "$d" ] && [ -f "$d/session_digest.py" ] && command -v python3 >/dev/null 2>&1; then
-  extra="$(python3 "$d/session_digest.py" "$start_source" "$session_id" 2>/dev/null || true)"
+  extra="$(python3 "$d/session_digest.py" "$start_source" "$session_id" "$pr_url" 2>/dev/null || true)"
 fi
 [ -n "$extra" ] && context="${context}${extra}"
 

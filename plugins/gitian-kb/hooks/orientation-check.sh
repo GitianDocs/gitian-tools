@@ -12,8 +12,8 @@
 # A write into Claude Code's EPHEMERAL state -- <config>/projects/ (agent memory, transcripts) and
 # <config>/plans/, where <config> is $CLAUDE_CONFIG_DIR or ~/.claude -- is exempt entirely: no
 # in-flight plan can claim such a path, so nudging it taught agents that the nudge is noise. It
-# neither fires the flag nor counts as an edit (the Stop publish-reminder counts edits, and a
-# memory write is not repo work either), so the first REAL mutation still gets the nudge. The list
+# neither fires the flag nor counts as an edit (the activity ledger counts edits, and a memory
+# write is not repo work either), so the first REAL mutation still gets the nudge. The list
 # is an allowlist on purpose: <config>/plugins, agents, skills and commands are AUTHORED source,
 # and a session whose whole task is editing a plugin there must still be nudged. A relative target
 # is resolved against the payload's cwd first; the match is lexical (no `..` resolution), which is
@@ -25,6 +25,11 @@
 # It used to deny the first mutation once and rely on an identical re-send, which is the same
 # "advisory check that blocks" failure the publish lint had. The mutation it fires on therefore
 # counts as an edit like any other.
+#
+# Every counted mutation is recorded by gks_record_edit (ledger.py edit): one edit in the activity
+# ledger's per-minute bucket for the repo the target lives in, plus the legacy `edits` counter. The
+# target is the resolved absolute path, so a relative one counts where it really is, and a
+# NotebookEdit's `notebook_path` counts like an Edit's `file_path`.
 #
 # Inside a DELEGATED session (the payload carries `agent_id`, set only when a hook fires inside a
 # subagent) it stays silent: the advice is "dispatch kb-librarian", which a subagent has no tool
@@ -151,5 +156,7 @@ if [ "$reads" = "0" ] && [ -z "$agent_id" ]; then
   fi
 fi
 
-gks_incr "$sid" edits
+# $target is the (absolute, see above) file_path / notebook_path; empty only for a malformed
+# payload, which is still counted, just not attributed to a repo.
+gks_record_edit "$sid" "$target"
 exit 0

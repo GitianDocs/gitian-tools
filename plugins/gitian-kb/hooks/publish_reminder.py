@@ -1,63 +1,67 @@
 #!/usr/bin/env python3
-"""publish_reminder.py -- Stop hook for the gitian-kb plugin's nudge layer.
+"""publish_reminder.py -- the gitian-kb nudge layer's Stop hook: the completion checkpoint.
 
-Invoked by publish-reminder.sh (stdin passed straight through, unread by the wrapper) on every
-Stop event. Streams the turn's transcript looking for a session that has edited files or made a
-commit without ever publishing to the gitian KB, and -- once per session -- blocks with an
-advisory reminder to brief kb-scribe if the work clears the gitian-kb skill's meaningful-event
-bar.
+Invoked by publish-reminder.sh (stdin passed straight through, unread by the wrapper) on every Stop
+event. It asks the session's activity ledger (ledger.py) one question -- "has the session reached a
+completion point that no KB write covers yet?" -- and answers it with at most one block per
+completion: {"decision": "block", "reason": ...}, whose reason lists, repo by repo, what is
+unwritten, so the agent can brief kb-scribe ONCE with all of it instead of reconstructing hours of
+transcript.
 
-"Without ever publishing" is answered from TWO sources, because under [[kb-scribe-delegation]]
-the publish normally happens somewhere this hook cannot see: a background kb-scribe writes from
-its own sidechain transcript, a separate file. So the transcript scan below is joined by
-`_recorded_publishes`, the `sessions.<sid>.publishes` counter harvest.py maintains -- a subagent's
-MCP traffic fires the PostToolUse harvest under the PARENT's session id, which is what makes the
-scribe's work visible here at all.
+Why the Stop hook is the place for completion points ONLY. A block is not a message, it is a whole
+extra turn: the model re-runs at the session's full context (often 300-500k tokens of cache reads)
+and the brief it then writes is a ~100k-token scribe run on top. So this hook spends that only where
+nothing cheaper exists -- the session's first work, and a merge or release (at most one per
+COMPLETION_FLOOR, so a burst of merges is one block). Commits, edits and standing rules ride along
+as a few lines of context on the user's next prompt (prompt_checkpoint.py) or at SessionStart, which
+cost no turn. `ledger.stop_decision` encodes that split and this module never second-guesses it.
+It also fires only at a CHECKPOINT, never right after an event: a compliant agent has briefed the
+scribe by the end of its turn, so its activity is already covered and the session sees nothing --
+the release gate in tests/test_invariant.py.
 
-Silent inside a DELEGATED session (the payload carries `agent_id`, set only when a hook fires
-inside a subagent): the reminder's remedy is "brief kb-scribe", which a subagent has no tool for.
-Claude Code fires SubagentStop rather than Stop for a subagent today, so this is a guard against a
-payload shape, not a path known to run -- the cost of being wrong the other way is a blocked turn.
+Why it polls. A merge happens ON GitHub: `gh pr merge --auto` only ARMS one, and the real merge
+lands when CI goes green or a person clicks, long after any command a hook could see. So the
+ledger keeps a WATCH list of pull requests the session opened or set merging, and this hook sends
+the due ones to pr_poll.py -- one `gh api graphql` call, at most every POLL_INTERVAL. MERGED becomes
+a `merge` event (the only source of merges), CLOSED is dropped, anything else keeps being watched.
 
-Fail-open, always: the loop guard (stop_hook_active) is checked first and unconditionally; a
-missing/unreadable transcript, corrupt state, or any other error anywhere below is swallowed by
-the top-level guard in `main()`'s caller and the process always exits 0 having printed nothing.
+Why the state lock is never held across `gh`. The lock serializes every hook of every session on the
+machine, and the poll is a network call (a 4 s cap against this hook's 10 s budget; a hung `gh`
+costs the whole cap). So the order is: read an UNLOCKED snapshot, decide from it what is due, make
+the call with no lock held, and only then take ONE locked read-modify-write that folds the answer
+in, makes the decision AGAIN on the state as it is now (a racing Stop or another hook may have got
+there first -- this is what keeps a nudge to one) and stamps it shown. A turn end with nothing due
+and nothing to say returns before it ever takes the lock, and writes nothing.
+
+Silent -- no poll, no write, no output -- when the payload carries `stop_hook_active` (the loop
+guard: this Stop continues an earlier block; checked first, unconditionally), `agent_id` (a
+DELEGATED session cannot brief kb-scribe, the only remedy on offer; Claude Code fires SubagentStop
+rather than Stop for a subagent today, so this guards a payload shape, not a path known to run, and
+the cost of being wrong the other way is a blocked turn) or no session id.
+
+The transcript is never read here. Its path is only remembered (ledger.note_transcript) so a
+/clear can name it to the scribe: a turn end costs a state read, not a scan of a transcript tens of
+MB long.
+
+Fail-open, always: a missing `gh`, corrupt state, a failed write or any other error is swallowed
+by the top-level guard in `__main__` and the process exits 0 having printed nothing. The block is
+printed in one write and only AFTER the write that records it succeeded: a nudge that could not be
+remembered is never shown, because it would repeat at every turn end.
 
 Run directly: python3 publish_reminder.py < stop_envelope.json
 Tests: plugins/gitian-kb/hooks/tests/test_publish_reminder.py (drives it via publish-reminder.sh,
-end to end).
+end to end; a fake `gh` first on PATH answers the poll).
 """
 
+import copy
 import json
 import sys
 
 # publish_reminder.py always runs as a script file (never `python3 -c ...`), so Python has already
-# put its own directory at sys.path[0] -- `import state`/`import commit_nudge` below resolve their
-# sibling modules directly, no path manipulation needed (matches harvest.py's own house style).
-import commit_nudge as commit_nudge_mod
-import kb_tool
-import state as state_mod
-
-EDIT_TOOL_NAMES = ("Edit", "Write", "NotebookEdit")
-# Mirrors harvest.py's own PUBLISH_MARKERS, patch tools included: a revision records the work as
-# surely as a create does, and patch_doc/body_edits is kb-scribe's normal revision path. A
-# batch_write is up to 25 of those in one call, so it counts the same.
-PUBLISH_MARKERS = (
-    "publish_doc",
-    "publish_memory",
-    "publish_entry",
-    "publish_topic",
-    "publish_category",
-    "append_entry",
-    "patch_doc",
-    "patch_memory",
-    "batch_write",
-)
-FLAG_NAME = "publish_reminder"
-
-# Pinned decision 4: publishes == 0 AND (edits >= EDIT_THRESHOLD OR commits >= COMMIT_THRESHOLD).
-EDIT_THRESHOLD = 3
-COMMIT_THRESHOLD = 1
+# put its own directory at sys.path[0] -- the sibling imports below resolve directly, no path
+# manipulation needed (matches harvest.py's own house style).
+import ledger as ledger_mod
+import pr_poll
 
 
 def _parse_stdin():
@@ -72,198 +76,55 @@ def _parse_stdin():
     return payload
 
 
-def _command_has_git_commit(command):
-    """Segment-aware git-commit detection -- delegated straight to commit_nudge.py's own
-    `_is_git_commit_segment` (segment split via its `_SEGMENT_SPLIT_RE`: |, ;, &&, or a newline),
-    so both hooks judge the exact same Bash command the exact same way through ONE implementation
-    rather than two that could silently drift. `_is_git_commit_segment` shlex-tokenizes each
-    segment (so a quoted phrase -- e.g. `gh pr create --body "after review, run git commit
-    again"` -- stays ONE token, never separate `git`/`commit` words) and anchors the match to the
-    segment's command head, which is what keeps a mere quoted MENTION of "git commit" inside
-    another command's argument from ever being misread as a commit action -- the naive whitespace
-    token scan this used to duplicate here could not tell the two apart."""
-    if not isinstance(command, str) or not command.strip():
-        return False
-    return any(
-        commit_nudge_mod._is_git_commit_segment(segment)
-        for segment in commit_nudge_mod._SEGMENT_SPLIT_RE.split(command)
-    )
-
-
-def _is_publish_tool(tool_name):
-    return kb_tool.is_kb_tool(tool_name) and any(marker in tool_name for marker in PUBLISH_MARKERS)
-
-
-def _tool_use_blocks(line_obj):
-    """Yield tool_use content blocks from one parsed transcript line, walking defensively --
-    anything not shaped like {"type":"assistant","message":{"content":[...]}} yields nothing."""
-    if not isinstance(line_obj, dict) or line_obj.get("type") != "assistant":
-        return
-    message = line_obj.get("message")
-    if not isinstance(message, dict):
-        return
-    content = message.get("content")
-    if not isinstance(content, list):
-        return
-    for block in content:
-        if isinstance(block, dict) and block.get("type") == "tool_use":
-            yield block
-
-
-def _scan_transcript(path):
-    """Stream the transcript JSONL line by line -- never slurp the whole file, transcripts reach
-    tens of MB. Each line is its own json.loads; unparsable lines are skipped, not fatal. Raises on
-    a missing/unreadable file -- the caller treats that as silent (fail-open)."""
-    edits = 0
-    commits = 0
-    publishes = 0
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                line_obj = json.loads(line)
-            except Exception:
-                continue
-            for block in _tool_use_blocks(line_obj):
-                name = block.get("name")
-                tool_input = block.get("input")
-                tool_input = tool_input if isinstance(tool_input, dict) else {}
-                if isinstance(name, str) and name in EDIT_TOOL_NAMES:
-                    edits += 1
-                elif name == "Bash" and _command_has_git_commit(tool_input.get("command")):
-                    commits += 1
-                if _is_publish_tool(name):
-                    publishes += 1
-    return edits, commits, publishes
-
-
-def _recorded_publishes(state, sid):
-    """sessions.<sid>.publishes as harvested by harvest.py -- the ONLY evidence a background
-    kb-scribe's publish leaves in reach of this hook. The scribe writes from its own sidechain
-    transcript, a SEPARATE file, so `_scan_transcript` below cannot see it; the PostToolUse
-    harvest fires with the parent's session_id and counts it here instead. Epoch-scoped like the
-    flag (a /clear bump zeroes it). Fully defensive: any odd shape reads as 0.
-
-    This short-circuit is exactly why harvest.py counts a write ONLY on a decoded success envelope
-    (see its `_publish_outcome`): one `rev_conflict`/`edit_no_match`/`base_rev_required`
-    miscounted as a publish would silence this reminder for the whole epoch, in precisely the case
-    where the work never reached the KB and the reminder matters most. A no-op republish
-    (`unchanged: true`) does not count there either."""
-    sessions = state.get("sessions")
-    if not isinstance(sessions, dict):
-        return 0
-    session = sessions.get(sid)
-    if not isinstance(session, dict):
-        return 0
-    value = session.get("publishes")
-    if isinstance(value, bool) or not isinstance(value, int):
-        return 0
-    return value if value > 0 else 0
-
-
-def _flag_already_set(state, sid, flag):
-    """Peek sessions.<sid>.flags.<flag> WITHOUT consuming it -- fully defensive, never raises,
-    so an oddly-shaped (corrupt) session/flags value just reads as "not set" rather than crashing
-    the peek itself."""
-    sessions = state.get("sessions")
-    if not isinstance(sessions, dict):
-        return False
-    session = sessions.get(sid)
-    if not isinstance(session, dict):
-        return False
-    flags = session.get("flags")
-    if not isinstance(flags, dict):
-        return False
-    return flags.get(flag) is True
-
-
-def _touch_session(state, sid):
-    sessions = state.setdefault("sessions", {})
-    session = sessions.get(sid)
-    if not isinstance(session, dict):
-        session = {}
-        sessions[sid] = session
-    state_mod.ensure_session_shape(session)
-    return session
-
-
-def _flag_once(sid, flag):
-    """In-process equivalent of state.py's `flag-once` CLI subcommand (see cmd_flag_once), used
-    directly via the importable primitives rather than shelling out (matches harvest.py's own
-    house style for sibling hook glue). Returns True iff THIS call is the one that set the flag."""
-    path = state_mod.state_path()
-
-    def mutate():
-        state = state_mod.load(path)
-        session = _touch_session(state, sid)
-        flags = session.setdefault("flags", {})
-        if flags.get(flag) is True:
-            return False
-        flags[flag] = True
-        session["updatedAt"] = state_mod.now_iso()
-        state_mod.save(path, state_mod.finalize(state))
-        return True
-
-    return state_mod.with_lock(path, mutate)
-
-
-def _build_reason(edits, commits):
-    parts = []
-    if edits:
-        parts.append("%d file edit%s" % (edits, "" if edits == 1 else "s"))
-    if commits:
-        parts.append("a commit" if commits == 1 else "%d commits" % commits)
-    activity = " and ".join(parts) if parts else "activity"
-    return (
-        "%s this session with nothing published to the gitian KB. If any of it clears the "
-        "meaningful-event bar (see the gitian-kb skill's trigger table), brief kb-scribe now "
-        "(background) with what happened, the decisions and why -- it authors and publishes. "
-        "If nothing qualifies, finish normally: this reminder fires once per session." % activity
-    )
+def _scratch(session):
+    """A copy for the decision functions to normalize freely: ledger.due_watch trims the watch and
+    the readers reshape whatever dict they are handed, and the snapshot is read twice."""
+    return copy.deepcopy(session)
 
 
 def main():
     payload = _parse_stdin()
 
-    # Loop guard -- ALWAYS first, unconditionally.
-    if payload.get("stop_hook_active") is True:
+    # Loop guard -- ALWAYS first, unconditionally. Truthy, not `is True`: the cost of a stray value
+    # reading as "active" is one skipped nudge, the cost of the other way round is a block loop.
+    if payload.get("stop_hook_active"):
         return
-    if payload.get("agent_id"):
-        return  # a delegated session cannot brief kb-scribe -- see the module docstring
+    if payload.get("agent_id") or payload.get("agent_type"):
+        # A subagent (agent_id) or a `claude --agent <name>` session (agent_type, the field
+        # SessionStart documents) cannot brief kb-scribe -- see the module docstring.
+        return
 
     sid = payload.get("session_id")
     if not isinstance(sid, str) or not sid:
         return
 
-    # ONE state read for both questions. Check the flag WITHOUT consuming it: below-threshold
-    # turns must leave it unset so a later turn-end that crosses the bar can still fire.
-    state = state_mod.load()
-    if _flag_already_set(state, sid, FLAG_NAME):
-        return
-    if _recorded_publishes(state, sid) > 0:
-        return  # a scribe (or this session itself) already published -- nothing to remind about
+    now = ledger_mod.utcnow()
+    snapshot = ledger_mod.read_session(sid)  # unlocked: it only decides whether to ask GitHub
+    due = ledger_mod.due_watch(_scratch(snapshot), now)
+    results = pr_poll.poll(due) if due else {}  # the network call -- NO state lock held here
+    if not due and not ledger_mod.stop_decision(_scratch(snapshot), now):
+        return  # nothing to ask and nothing to say: a quiet turn end writes nothing
 
-    transcript_path = payload.get("transcript_path")
-    if not isinstance(transcript_path, str) or not transcript_path:
-        return
+    transcript = payload.get("transcript_path")
 
-    try:
-        edits, commits, publishes = _scan_transcript(transcript_path)
-    except Exception:
-        return  # missing transcript, unreadable file, any parse-adjacent error -> silent
+    def checkpoint(session):
+        # Everything below is judged on the state as it is NOW, under the lock. The clock is read
+        # again because the poll may have taken seconds, and `nudges.at` must not be older than
+        # activity another hook recorded meanwhile: that activity is in the text shown below, so it
+        # must not count as new at the next checkpoint.
+        at = ledger_mod.utcnow()
+        ledger_mod.note_transcript(session, transcript)
+        if due:
+            ledger_mod.apply_poll(session, at, results, polled=due)
+        if not ledger_mod.stop_decision(session, at):
+            return None
+        reason = ledger_mod.stop_reason(session, at)
+        ledger_mod.mark_nudged(session, at)
+        return reason
 
-    if publishes != 0:
-        return
-    if edits < EDIT_THRESHOLD and commits < COMMIT_THRESHOLD:
-        return  # below threshold -- flag must NOT be consumed
-
-    if not _flag_once(sid, FLAG_NAME):
-        return  # already fired (race with another turn) -- stay silent
-
-    sys.stdout.write(json.dumps({"decision": "block", "reason": _build_reason(edits, commits)}))
-    sys.stdout.write("\n")
+    reason = ledger_mod.mutate_session(sid, checkpoint)
+    if reason:
+        sys.stdout.write(json.dumps({"decision": "block", "reason": reason}) + "\n")
 
 
 if __name__ == "__main__":

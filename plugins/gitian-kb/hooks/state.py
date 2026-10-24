@@ -56,6 +56,12 @@ _SESSION_DEFAULTS = {
     # retry to recognise); kept so state files from older installs keep one shape.
     "lintHashes": [],
     "mintPrompted": [],
+    # 0.33.0 ([[kb-nudge-checkpoints-plan]]): the activity ledger, the pull requests being polled
+    # for a merge, and the checkpoint-nudge bookkeeping. Their shape and every rule over them live
+    # in ledger.py; this module only guarantees the keys exist.
+    "ledger": {},
+    "watch": [],
+    "nudges": {},
 }
 
 
@@ -324,7 +330,10 @@ def cmd_bump_epoch(args):
         session["gitianReads"] = 0
         session["edits"] = 0
         session["publishes"] = 0
-        # lastSeenVocabRev deliberately survives an epoch bump.
+        # lastSeenVocabRev deliberately survives an epoch bump, and so do the ledger, the watch
+        # and the nudge bookkeeping: /clear empties the conversation, not the work it did. The
+        # clear-time SessionStart (session_digest.py) names the unwritten activity once and then
+        # resets the ledger itself, after this bump has run.
         session["updatedAt"] = now_iso()
         save(path, finalize(state))
 
@@ -412,8 +421,52 @@ def cmd_status(_args):
             )
         )
 
+        lines.extend(_ledger_status(current))
+
     sys.stdout.write("\n".join(lines))
     sys.stdout.write("\n")
+
+
+def _ledger_status(session):
+    """The current session's ledger, watch and checkpoints, rendered by ledger.py itself (imported
+    here, not at module level: ledger.py imports this module). Empty on any failure -- status must
+    never crash on an odd state file."""
+    try:
+        import ledger as ledger_mod
+
+        session = json.loads(json.dumps(session))  # a scratch copy: normalizing must not write
+        now = ledger_mod.utcnow()
+        led = ledger_mod.ledger_of(session)
+        open_lines = ledger_mod.render_lines(session, now)
+        out = []
+        if open_lines:
+            out.append(
+                "  activity no KB write covers yet (since %s):"
+                % ledger_mod.since_label(session, now)
+            )
+            out.extend("  " + line for line in open_lines)
+        else:
+            out.append("  activity no KB write covers yet: none")
+        watch = ledger_mod.watch_of(session)
+        out.append(
+            "  watching for a merge: %s"
+            % (
+                ", ".join("%s (%s)" % (ledger_mod.watch_key(e), e.get("why", "?")) for e in watch)
+                or "nothing"
+            )
+        )
+        nudges = ledger_mod.nudges_of(session)
+        out.append(
+            "  last KB write covering activity: %s; last scribe brief: %s; last checkpoint nudge: %s"
+            % (
+                _humanize_age(led.get("checkpointAt")),
+                _humanize_age(led.get("briefAt")),
+                _humanize_age(nudges.get("at")),
+            )
+        )
+        return out
+    except Exception:
+        return []
 
 
 def cmd_dump(_args):

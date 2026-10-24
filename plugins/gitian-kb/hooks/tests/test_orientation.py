@@ -179,6 +179,115 @@ class RepoClause(OrientationTestCase):
             shutil.rmtree(plain_dir, ignore_errors=True)
 
 
+class EditsLandInTheLedger(OrientationTestCase):
+    """Every counted mutation is also an entry in the session's activity ledger, bucketed under the
+    repo its TARGET lives in (`ledger.py edit`, via gks_record_edit), so the checkpoint nudges can
+    name the repos whose edits no KB write covers. The legacy `edits` counter keeps moving with it.
+    The session has KB reads recorded, so none of these calls prints any advice."""
+
+    def setUp(self):
+        super().setUp()
+        self.merge({"sessions": {"sess-1": {"gitianReads": 3}}})
+
+    def checkout(self, remote="git@github.com:acme/widgets.git"):
+        directory = tempfile.mkdtemp(prefix="gks-orientation-ledger-")
+        self.addCleanup(shutil.rmtree, directory, True)
+        subprocess.run(["git", "init", "-q", directory], check=True)
+        if remote:
+            subprocess.run(["git", "-C", directory, "remote", "add", "origin", remote], check=True)
+        return directory
+
+    def edit_in(self, directory, name="x", cwd=None, **extra):
+        """An Edit envelope for the file `name` inside `directory` (cwd defaults to it)."""
+        return envelope(
+            tool_input={"file_path": os.path.join(directory, name)}, cwd=cwd or directory, **extra
+        )
+
+    def edits(self, sid="sess-1"):
+        led = self.dump_state().get("sessions", {}).get(sid, {}).get("ledger", {})
+        return [
+            {k: v for k, v in bucket.items() if k not in ("min", "at")}
+            for bucket in led.get("edits", [])
+        ]
+
+    def total(self, sid="sess-1"):
+        return sum(bucket["n"] for bucket in self.edits(sid))
+
+    def test_an_edit_is_bucketed_under_the_repo_its_target_lives_in(self):
+        repo = self.checkout()
+        # cwd is somewhere else entirely: it is the target that decides.
+        proc = self.run_hook(
+            envelope(tool_input={"file_path": os.path.join(repo, "src", "a.ts")}, cwd="/tmp")
+        )
+        self.assert_silent(proc)
+        self.assertEqual(self.edits(), [{"repo": "acme/widgets", "n": 1}])
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"]["edits"], 1)
+
+    def test_a_relative_target_counts_where_it_really_is(self):
+        repo = self.checkout()
+        self.assert_silent(self.run_hook(envelope(tool_input={"file_path": "src/a.ts"}, cwd=repo)))
+        self.assertEqual(self.edits(), [{"repo": "acme/widgets", "n": 1}])
+
+    def test_a_notebook_path_counts_like_a_file_path(self):
+        repo = self.checkout()
+        proc = self.run_hook(
+            envelope(
+                tool_name="NotebookEdit",
+                tool_input={"notebook_path": os.path.join(repo, "analysis.ipynb")},
+                cwd="/tmp",
+            )
+        )
+        self.assert_silent(proc)
+        self.assertEqual(self.edits(), [{"repo": "acme/widgets", "n": 1}])
+
+    def test_every_edit_counts_in_the_ledger_and_in_the_legacy_counter(self):
+        repo = self.checkout()
+        for name in ("a.ts", "b.ts", "c.ts"):
+            self.assert_silent(self.run_hook(self.edit_in(repo, name)))
+        # A minute boundary may split the buckets; the count must not move.
+        self.assertEqual(self.total(), 3)
+        self.assertEqual({bucket["repo"] for bucket in self.edits()}, {"acme/widgets"})
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"]["edits"], 3)
+
+    def test_edits_in_two_checkouts_are_kept_apart(self):
+        widgets = self.checkout()
+        gadgets = self.checkout(remote="https://github.com/acme/gadgets.git")
+        for directory in (widgets, gadgets, gadgets):
+            self.assert_silent(self.run_hook(self.edit_in(directory, cwd="/tmp")))
+        counts = {}
+        for bucket in self.edits():
+            counts[bucket["repo"]] = counts.get(bucket["repo"], 0) + bucket["n"]
+        self.assertEqual(counts, {"acme/widgets": 1, "acme/gadgets": 2})
+
+    def test_a_checkout_without_a_remote_is_labelled_by_place_not_by_repo(self):
+        plain = self.checkout(remote=None)
+        self.assert_silent(self.run_hook(self.edit_in(plain)))
+        buckets = self.edits()
+        self.assertEqual(len(buckets), 1)
+        self.assertNotIn("repo", buckets[0])
+        self.assertTrue(buckets[0]["where"])
+        self.assertEqual(buckets[0]["n"], 1)
+
+    def test_a_delegated_edit_is_recorded_too(self):
+        repo = self.checkout()
+        payload = self.edit_in(repo)
+        payload["agent_id"] = "agent-123"
+        self.assert_silent(self.run_hook(payload))
+        self.assertEqual(self.edits(), [{"repo": "acme/widgets", "n": 1}])
+
+    def test_a_payload_without_a_target_is_still_counted_unattributed(self):
+        self.assert_silent(self.run_hook(envelope(tool_input={}, cwd="/tmp")))
+        self.assertEqual(self.total(), 1)
+        self.assertEqual(self.dump_state()["sessions"]["sess-1"]["edits"], 1)
+
+    def test_the_first_edit_of_a_session_with_no_reads_is_recorded_beside_its_advice(self):
+        # The advice still fires once, and the edit it fired on is recorded like any other.
+        repo = self.checkout()
+        proc = self.run_hook(self.edit_in(repo, session_id="fresh"))
+        self.assert_advised(proc)
+        self.assertEqual(self.edits("fresh"), [{"repo": "acme/widgets", "n": 1}])
+
+
 class ClaudeEphemeralStateIsExempt(OrientationTestCase):
     """A write into Claude Code's ephemeral state (<config>/projects -- agent memory, transcripts
     -- and <config>/plans) is a path no in-flight plan can claim: silent, flag NOT spent, NOT
@@ -198,9 +307,12 @@ class ClaudeEphemeralStateIsExempt(OrientationTestCase):
         self.assert_silent(proc)
         session = self.dump_state().get("sessions", {}).get("sess-1", {})
         self.assertEqual(session.get("edits", 0), 0)
+        self.assertEqual(session.get("ledger", {}).get("edits", []), [])  # nor in the ledger
         self.assertNotEqual(session.get("flags", {}).get("orientation"), True)
 
         self.assert_advised(self.run_hook(envelope(tool_input={"file_path": "/repo/src/a.ts"})))
+        session = self.dump_state()["sessions"]["sess-1"]
+        self.assertEqual(sum(b["n"] for b in session["ledger"]["edits"]), 1)
 
     def test_plans_are_exempt_and_a_notebook_path_is_read_too(self):
         plan = os.path.join(self.config, "plans", "x.md")

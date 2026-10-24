@@ -15,9 +15,16 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HOOKS_DIR))
+
+import harvest  # noqa: E402  (the modules under test live one directory up)
+import ledger  # noqa: E402
+
 HARVEST_SH = HOOKS_DIR / "harvest.sh"
 STATE_PY = HOOKS_DIR / "state.py"
 
@@ -32,8 +39,8 @@ CODE_PREFIXES = ("mcp__plugin_gitian-docs_gitian-code__", "mcp__gitian-code__")
 CODE_TOOL_NAMES = tuple(prefix + tool for prefix in CODE_PREFIXES for tool in CODE_TOOLS)
 
 
-def envelope(tool_name, tool_input=None, tool_response=None, session_id="sess-1"):
-    return {
+def envelope(tool_name, tool_input=None, tool_response=None, session_id="sess-1", agent_id=None):
+    payload = {
         "session_id": session_id,
         "transcript_path": "/tmp/transcript.jsonl",
         "cwd": "/repo",
@@ -42,6 +49,9 @@ def envelope(tool_name, tool_input=None, tool_response=None, session_id="sess-1"
         "tool_input": tool_input if tool_input is not None else {},
         "tool_response": tool_response if tool_response is not None else {},
     }
+    if agent_id is not None:
+        payload["agent_id"] = agent_id  # set only when the call was made inside a subagent
+    return payload
 
 
 class HarvestTestCase(unittest.TestCase):
@@ -1243,6 +1253,319 @@ class BatchWrite(HarvestTestCase):
         self.assertIn("clever", context)
         undescribed = self.dump_state()["servers"][SERVER_KEY]["undescribedTopics"]
         self.assertEqual(sorted(undescribed), ["clever", "rostering"])
+
+
+def stamp(minutes_ago=0.0):
+    """An ISO timestamp `minutes_ago` before the real now (the hook reads the real clock)."""
+    moment = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def seconds_ago(value):
+    parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - parsed).total_seconds()
+
+
+def commit_event(ago, repo="acme/api", ref="abc1234"):
+    return {"at": stamp(ago), "kind": "commit", "repo": repo, "ref": ref, "text": "Fix the thing"}
+
+
+def merge_event(ago, repo="acme/api", number=650):
+    ref = "#%d" % number
+    return {"at": stamp(ago), "kind": "merge", "repo": repo, "ref": ref, "text": "Ship it"}
+
+
+def edit_bucket(ago, n, repo="acme/api"):
+    at = stamp(ago)
+    return {"min": at[:16], "at": at, "repo": repo, "n": n}
+
+
+class LedgerCheckpoint(HarvestTestCase):
+    """A successful CONTENT write moves the session's activity-ledger checkpoint
+    (ledger.apply_content_write), inside the harvest's one locked write: the primary's own write
+    covers everything up to now, a subagent's (`agent_id` set, i.e. the scribe) only what its brief
+    could have held. Vocabulary writes, retractions, moves, failures and no-ops never move it.
+    State is seeded with timestamps relative to the real now; responses are the bare-list shape."""
+
+    PLUGIN = "mcp__plugin_gitian-kb_gitian-kb__"
+    CONTENT_TOOLS = (
+        "publish_doc",
+        "publish_memory",
+        "publish_entry",
+        "append_entry",
+        "patch_doc",
+        "patch_memory",
+    )
+
+    def seed_ledger(self, **led):
+        """Write a session holding exactly this ledger; returns it, for 'left untouched' checks."""
+        os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
+        session = {"ledger": led, "updatedAt": stamp()}
+        doc = {"schemaVersion": 1, "servers": {}, "sessions": {"sess-1": session}}
+        with open(self.state_file, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh)
+        return json.loads(json.dumps(led))
+
+    def session(self):
+        return self.dump_state()["sessions"]["sess-1"]
+
+    def led(self):
+        return self.session()["ledger"]
+
+    def state_bytes(self):
+        with open(self.state_file, "rb") as fh:
+            return fh.read()
+
+    @staticmethod
+    def success(slug="a-doc", **extra):
+        return {"slug": slug, "rev": 3, **extra}
+
+    def write(self, tool, payload, agent_id=None, tool_input=None, prefix=None):
+        return self.run_harvest(
+            envelope(
+                (prefix or self.PLUGIN) + tool,
+                tool_input=tool_input,
+                tool_response=bare_list(payload),
+                agent_id=agent_id,
+            )
+        )
+
+    def batch(self, results, operations, agent_id=None):
+        succeeded = sum(1 for r in results if r["ok"])
+        response = {
+            "results": results,
+            "succeeded": succeeded,
+            "failed": len(results) - succeeded,
+            "vocab_rev": 31,
+        }
+        return self.write(
+            "batch_write", response, agent_id=agent_id, tool_input={"operations": operations}
+        )
+
+    def assert_just_now(self, value):
+        self.assertIsInstance(value, str)
+        self.assertLess(abs(seconds_ago(value)), 30)
+
+    def assert_about(self, value, minutes_ago):
+        self.assertIsInstance(value, str)
+        self.assertLess(abs(seconds_ago(value) - minutes_ago * 60), 30)
+
+    # --- who wrote decides how far it covers ------------------------------------------------
+
+    def test_a_primary_content_write_checkpoints_now_and_prunes_what_it_covers(self):
+        # A pending brief changes nothing for the primary's own write: it covers up to now.
+        self.seed_ledger(
+            events=[commit_event(40), merge_event(10)], edits=[edit_bucket(25, 4)], briefAt=stamp(5)
+        )
+        self.assert_silent(self.write("publish_doc", self.success("onboarding-guide")))
+        led = self.led()
+        self.assert_just_now(led["checkpointAt"])
+        self.assertEqual((led["events"], led["edits"]), ([], []))
+        self.assertEqual(led["scribeIds"], [])  # nobody was delegated
+        self.assertEqual(self.session()["publishes"], 1)  # the pre-ledger counter keeps moving
+
+    def test_every_content_write_tool_checkpoints_under_both_spellings(self):
+        for prefix in (self.PLUGIN, "mcp__gitian-kb__"):
+            for tool in self.CONTENT_TOOLS:
+                with self.subTest(prefix=prefix, tool=tool):
+                    self.seed_ledger(events=[commit_event(10)])
+                    self.assert_silent(self.write(tool, self.success(), prefix=prefix))
+                    led = self.led()
+                    self.assert_just_now(led["checkpointAt"])
+                    self.assertEqual(led["events"], [])
+
+    def test_a_session_with_no_ledger_yet_still_records_the_checkpoint(self):
+        self.assert_silent(self.write("publish_memory", self.success("a-standing-rule")))
+        self.assert_just_now(self.led()["checkpointAt"])
+
+    def test_a_delegated_write_covers_only_what_its_brief_could_have_held(self):
+        brief = stamp(20)
+        self.seed_ledger(
+            events=[commit_event(30), commit_event(10, ref="def5678")],
+            edits=[edit_bucket(5, 3)],
+            briefAt=brief,
+        )
+        self.assert_silent(self.write("patch_doc", self.success(), agent_id="agent-7"))
+        led = self.led()
+        self.assertEqual(led["checkpointAt"], brief)
+        # The commit before the brief is the brief's; what came after it was never in it.
+        self.assertEqual([e["ref"] for e in led["events"]], ["def5678"])
+        self.assertEqual([b["n"] for b in led["edits"]], [3])
+        self.assertEqual(led["scribeIds"], ["agent-7"])
+
+    def test_a_delegated_write_with_no_brief_seen_covers_ten_minutes_back(self):
+        self.seed_ledger(events=[commit_event(20), commit_event(5, ref="def5678")])
+        self.assert_silent(self.write("publish_entry", self.success(), agent_id="agent-7"))
+        led = self.led()
+        self.assert_about(led["checkpointAt"], 10)
+        self.assertEqual([e["ref"] for e in led["events"]], ["def5678"])
+        self.assertEqual(led["scribeIds"], ["agent-7"])
+
+    def test_a_delegated_write_never_moves_the_checkpoint_back(self):
+        checkpoint = stamp(5)
+        self.seed_ledger(events=[commit_event(2)], checkpointAt=checkpoint, briefAt=stamp(20))
+        self.assert_silent(self.write("patch_memory", self.success(), agent_id="agent-7"))
+        led = self.led()
+        self.assertEqual(led["checkpointAt"], checkpoint)
+        self.assertEqual(len(led["events"]), 1)
+
+    # --- what never checkpoints --------------------------------------------------------------
+
+    def test_vocabulary_writes_never_checkpoint(self):
+        writes = (
+            ("publish_topic", {"slug": "zendesk", "state": "organic", "degree": 0}),
+            ("publish_topic", {"topics": [{"slug": "zendesk", "state": "organic", "degree": 0}]}),
+            ("publish_category", {"slug": "billing", "name": "Billing", "created": True}),
+        )
+        for tool, payload in writes:
+            for agent_id in (None, "agent-7"):
+                with self.subTest(tool=tool, agent_id=agent_id):
+                    seeded = self.seed_ledger(events=[commit_event(10)], edits=[edit_bucket(5, 3)])
+                    self.assert_silent(self.write(tool, payload, agent_id=agent_id))
+                    self.assertEqual(self.session()["publishes"], 1)  # still a publish, as before
+                    self.assertEqual(self.led(), seeded)  # ... and the ledger is exactly as it was
+
+    def test_the_other_servers_write_lookalikes_never_checkpoint(self):
+        # The code server has no writes, but a hook keyed on the bare name would not know that.
+        self.seed_ledger(events=[commit_event(10)])
+        before = self.state_bytes()
+        self.assert_silent(
+            self.write("publish_doc", self.success(), prefix="mcp__gitian-code__")
+        )
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_retractions_and_moves_never_checkpoint(self):
+        for tool, payload in (
+            ("retract_item", {"slug": "old-note", "retracted": True}),
+            ("retract_topic", {"slug": "old-topic", "retracted": True}),
+            ("move_item", {"slug": "a-doc", "moved_to": "acme/team"}),
+        ):
+            with self.subTest(tool=tool):
+                self.seed_ledger(events=[commit_event(10)])
+                before = self.state_bytes()
+                self.assert_silent(self.write(tool, payload))
+                self.assertEqual(self.state_bytes(), before)
+
+    def test_a_failed_write_never_checkpoints(self):
+        failures = (
+            ("patch_doc", {"error": "rev_conflict", "slug": "some-plan", "head_rev": 8}),
+            ("publish_doc", {"error": "validation_failed", "message": "bad input"}),
+            ("append_entry", {"ok": False, "slug": "journal", "rev": 2}),
+            ("publish_memory", {"slug": "a-memory", "rev": "eight"}),
+        )
+        for tool, payload in failures:
+            with self.subTest(tool=tool):
+                self.seed_ledger(events=[commit_event(10)])
+                before = self.state_bytes()
+                self.assert_silent(self.write(tool, payload, agent_id="agent-7"))
+                self.assertEqual(self.state_bytes(), before)
+
+    def test_a_no_op_republish_never_checkpoints(self):
+        # `vocab_rev` makes the harvest write something, so this proves the checkpoint abstained
+        # rather than the whole call being skipped.
+        seeded = self.seed_ledger(events=[commit_event(10)])
+        self.assert_silent(self.write("publish_doc", self.success(unchanged=True, vocab_rev=19)))
+        self.assertEqual(self.led(), seeded)
+        self.assertEqual(self.session()["publishes"], 0)
+
+    def test_reads_leave_the_ledger_alone(self):
+        seeded = self.seed_ledger(events=[commit_event(10)], edits=[edit_bucket(5, 3)])
+        self.assert_silent(self.write("get", {"slug": "x", "vocab_rev": 5}))
+        self.assertEqual(self.led(), seeded)
+
+    # --- batch_write -------------------------------------------------------------------------
+
+    def test_a_batch_that_landed_a_content_write_checkpoints(self):
+        self.seed_ledger(events=[commit_event(10)])
+        operations = [
+            {"tool": "publish_memory", "args": {"slug": "m"}},
+            {"tool": "append_entry", "args": {"section": "s"}},
+        ]
+        results = [BatchWrite.result(0, "m"), BatchWrite.result(1, "work-2026-10-24")]
+        self.assert_silent(self.batch(results, operations))
+        led = self.led()
+        self.assert_just_now(led["checkpointAt"])
+        self.assertEqual(led["events"], [])
+
+    def test_a_partly_failed_batch_checkpoints_on_the_content_write_that_landed(self):
+        self.seed_ledger(events=[commit_event(10)])
+        operations = [
+            {"tool": "publish_doc", "args": {"slug": "d"}},
+            {"tool": "patch_memory", "args": {"slug": "m"}},
+        ]
+        results = [BatchWrite.refusal(0), BatchWrite.result(1, "m")]
+        self.assert_silent(self.batch(results, operations))
+        self.assert_just_now(self.led()["checkpointAt"])
+
+    def test_a_batch_whose_content_writes_all_failed_never_checkpoints(self):
+        seeded = self.seed_ledger(events=[commit_event(10)])
+        operations = [
+            {"tool": "publish_doc", "args": {"slug": "d"}},
+            {"tool": "patch_doc", "args": {"slug": "e"}},
+        ]
+        refusals = [BatchWrite.refusal(0), BatchWrite.refusal(1, "rev_conflict")]
+        self.assert_silent(self.batch(refusals, operations))
+        self.assertEqual(self.led(), seeded)
+        self.assertEqual(self.session()["publishes"], 0)
+
+    def test_a_batch_of_no_ops_never_checkpoints(self):
+        seeded = self.seed_ledger(events=[commit_event(10)])
+        operations = [{"tool": "publish_doc", "args": {"slug": "d"}}]
+        self.assert_silent(self.batch([BatchWrite.result(0, "d", unchanged=True)], operations))
+        self.assertEqual(self.led(), seeded)
+
+    def test_a_landed_operation_that_is_not_a_content_write_never_checkpoints(self):
+        # The server batches only content tools today; this is the guard for a tool that is added
+        # to a batch later without being one. The FAILED publish_doc at index 0 must not stand in
+        # for the operation that actually landed at index 1.
+        seeded = self.seed_ledger(events=[commit_event(10)])
+        operations = [
+            {"tool": "publish_doc", "args": {"slug": "d"}},
+            {"tool": "publish_topic", "args": {"slug": "t", "description": "d"}},
+        ]
+        results = [BatchWrite.refusal(0), BatchWrite.result(1, "t")]
+        self.assert_silent(self.batch(results, operations))
+        # A batch that landed anything is a publish, as it always was.
+        self.assertEqual(self.session()["publishes"], 1)
+        self.assertEqual(self.led(), seeded)
+
+    def test_a_batch_whose_operations_cannot_be_read_back_proves_nothing(self):
+        seeded = self.seed_ledger(events=[commit_event(10)])
+        response = {"results": [BatchWrite.result(0, "m")], "succeeded": 1, "failed": 0}
+        for tool_input in ({}, {"operations": "not a list"}, {"operations": []}):
+            with self.subTest(tool_input=tool_input):
+                self.assert_silent(self.write("batch_write", response, tool_input=tool_input))
+                self.assertEqual(self.led(), seeded)
+
+    def test_a_delegated_batch_covers_like_any_delegated_write(self):
+        brief = stamp(20)
+        self.seed_ledger(
+            events=[commit_event(30), commit_event(10, ref="def5678")], briefAt=brief
+        )
+        operations = [{"tool": "publish_memory", "args": {"slug": "m"}}]
+        self.assert_silent(self.batch([BatchWrite.result(0, "m")], operations, agent_id="agent-7"))
+        led = self.led()
+        self.assertEqual(led["checkpointAt"], brief)
+        self.assertEqual([e["ref"] for e in led["events"]], ["def5678"])
+        self.assertEqual(led["scribeIds"], ["agent-7"])
+
+    # --- fail-open ---------------------------------------------------------------------------
+
+    def test_a_ledger_fault_never_costs_the_harvest_its_other_updates(self):
+        response = bare_list(self.success("kept-slug", vocab_rev=12))
+        payload = envelope(self.PLUGIN + "publish_doc", tool_response=response)
+        with mock.patch.dict(os.environ, {"GITIAN_KB_STATE_FILE": self.state_file}):
+            os.environ.pop("GITIAN_KB_URL", None)
+            with mock.patch.object(
+                ledger, "apply_content_write", side_effect=RuntimeError("boom")
+            ) as fault:
+                harvest.apply_effect(harvest.harvest(json.dumps(payload), payload))
+        fault.assert_called_once()
+        state = self.dump_state()
+        self.assertEqual(state["sessions"]["sess-1"]["publishes"], 1)
+        self.assertEqual(state["servers"][SERVER_KEY]["lastPublishSlug"], "kept-slug")
+        self.assertEqual(state["servers"][SERVER_KEY]["vocabRev"], 12)
+        self.assertNotIn("checkpointAt", state["sessions"]["sess-1"].get("ledger", {}))
 
 
 class CodeServerIgnored(HarvestTestCase):

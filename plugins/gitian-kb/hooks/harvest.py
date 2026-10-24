@@ -10,6 +10,14 @@ server's vocab revision, a cached snapshot of its topic list, discipline counter
 publishes), and publish/append timestamps -- all folded into the shared state file (see state.py)
 behind a single locked read-modify-write per invocation.
 
+It is also the one place that learns a KB write LANDED, which is what moves the activity ledger's
+checkpoint (ledger.py): a successful CONTENT write (`CONTENT_WRITE_TOOLS`, or a batch_write that
+landed one) calls `ledger.apply_content_write` inside that same locked write, so the activity the
+write covers is pruned in the same breath the publish is counted. Who wrote decides how far it
+covers: the payload's `agent_id` (set only for a subagent's call, i.e. the scribe) marks a
+delegated write, which covers only what its brief could have held. Vocabulary writes and
+retractions never move the checkpoint.
+
 Fail-open, silent-always for the harvest pass proper: vocab/read/publish tracking never prints
 anything. The one exception is the mint-description follow-up (see `mint_followup()` below): the
 first time a session sees a given auto-minted (organic, undescribed) topic slug in a gitian
@@ -32,6 +40,7 @@ import sys
 # without any path manipulation (see state.py's own docstring: "sibling hook glue can `import
 # state` directly rather than shelling out").
 import kb_tool
+import ledger as ledger_mod
 import plugin_update
 import state as state_mod
 
@@ -62,10 +71,10 @@ READ_SUFFIXES = (
 )
 # patch_doc/patch_memory ARE writes to the KB -- they carry no body, but they revise an item and
 # are the scribe's normal revision path, so a session whose whole KB contribution was a patch must
-# not read as "nothing published" to the Stop reminder (whose own marker list mirrors this one).
-# batch_write is a write too: it carries up to 25 of the above in one call, so a scribe that
-# imported a corpus through it has published exactly as much as one that made 25 calls. Its
-# envelope has no top-level `slug`, which is why _publish_outcome reads a batch by its results.
+# not read as "nothing published". batch_write is a write too: it carries up to 25 of the above in
+# one call, so a scribe that imported a corpus through it has published exactly as much as one that
+# made 25 calls. Its envelope has no top-level `slug`, which is why _publish_outcome reads a batch
+# by its results.
 PUBLISH_MARKERS = (
     "publish_doc",
     "publish_memory",
@@ -79,6 +88,19 @@ PUBLISH_MARKERS = (
 )
 APPEND_MARKERS = ("append_entry", "publish_entry")
 RETRACT_MARKERS = ("retract_item", "retract_topic")
+# The writes that put CONTENT in the KB -- an exact match on the bare tool name, and exactly the
+# tools batch_write runs. Only these can cover what a session did: publish_topic and
+# publish_category shape the vocabulary, a retraction or move decides what survives, and none of
+# them records any of the work, so a session that only described a topic still owes the KB its
+# journal. Matching the bare name (never a substring) keeps `publish_topic` out by construction.
+CONTENT_WRITE_TOOLS = (
+    "publish_doc",
+    "publish_memory",
+    "publish_entry",
+    "append_entry",
+    "patch_doc",
+    "patch_memory",
+)
 MAX_TOPICS = 200
 
 # Fallback regex for the ORIGINAL, unnested/top-level shape (e.g. a test fixture or a future
@@ -328,13 +350,11 @@ def _landed_batch_entries(payload):
     ]
 
 
-def _batch_landed_an_append(tool_name, tool_input, tool_response):
-    """True when `tool_name` is a batch_write and one of the operations that landed was a journal
-    write (`append_entry`/`publish_entry`). The commit-nudge damper keys on `lastAppendAt`, and a
-    journal entry written through a batch is exactly the entry it is asking about. The response
-    does not name each result's tool, so the operation is read back off `tool_input` by `index`."""
-    if "batch_write" not in tool_name:
-        return False
+def _batch_landed_a_tool(tool_input, tool_response, tools):
+    """True when one of a batch_write's operations that LANDED (see _landed_batch_entries) was a
+    call of one of `tools`. The response does not name each result's tool, so the operation is read
+    back off `tool_input` by the result's `index`; a result whose index points at nothing, or an
+    input with no operations list, proves nothing and reads as False."""
     operations = tool_input.get("operations")
     if not isinstance(operations, list):
         return False
@@ -346,8 +366,30 @@ def _batch_landed_an_append(tool_name, tool_input, tool_response):
             if not _is_int(index) or not 0 <= index < len(operations):
                 continue
             operation = operations[index]
-            if isinstance(operation, dict) and operation.get("tool") in APPEND_MARKERS:
+            if isinstance(operation, dict) and operation.get("tool") in tools:
                 return True
+    return False
+
+
+def _batch_landed_an_append(tool_name, tool_input, tool_response):
+    """True when `tool_name` is a batch_write and one of the operations that landed was a journal
+    write (`append_entry`/`publish_entry`). The commit-nudge damper keys on `lastAppendAt`, and a
+    journal entry written through a batch is exactly the entry it is asking about."""
+    if "batch_write" not in tool_name:
+        return False
+    return _batch_landed_a_tool(tool_input, tool_response, APPEND_MARKERS)
+
+
+def _is_content_write(tool_name, tool_input, tool_response):
+    """Whether a write that already counted as a publish (see _publish_outcome) put CONTENT in the
+    KB, i.e. one of `CONTENT_WRITE_TOOLS`. A batch_write is one only when an operation that
+    landed was such a call -- the same landed-only reading that makes a batch a publish at all, so
+    a batch whose every write was refused or unchanged never moves the ledger's checkpoint."""
+    bare = kb_tool.kb_tool_name(tool_name)
+    if bare in CONTENT_WRITE_TOOLS:
+        return True
+    if bare == "batch_write":
+        return _batch_landed_a_tool(tool_input, tool_response, CONTENT_WRITE_TOOLS)
     return False
 
 
@@ -358,10 +400,10 @@ def _publish_outcome(tool_response):
 
     A no-op does NOT count. The server reports a write whose content already matched the head as
     an ordinary success envelope carrying `unchanged: true` (repository.ts's `noop` plan) --
-    nothing was stored, so the session contributed nothing to the KB, and the counter this feeds
-    is what silences the Stop reminder for the rest of the epoch. Counting it would also hand an
-    agent a way to buy that silence by re-sending an old body verbatim. The envelope's `vocab_rev`
-    is still harvested; only the publish counter and the publish timestamps abstain."""
+    nothing was stored, so the session contributed nothing to the KB, and the ledger checkpoint
+    this feeds would prune activity no write covers. Counting it would also hand an agent a way to
+    buy that silence by re-sending an old body verbatim. The envelope's `vocab_rev` is still
+    harvested; only the publish counter, the publish timestamps and the checkpoint abstain."""
     success = None
     for payload in _envelope_candidates(tool_response):
         if _is_failure_envelope(payload):
@@ -545,6 +587,7 @@ def harvest(raw_text, payload):
     incr_reads = _is_read_call(tool_name, is_vocab_read)
 
     incr_publishes = False
+    content_write = False
     if _is_publish_call(tool_name):
         success = _publish_outcome(tool_response)
         if success is not None:
@@ -559,6 +602,7 @@ def harvest(raw_text, payload):
                 tool_name, tool_input, tool_response
             ):
                 server_updates["lastAppendAt"] = state_mod.now_iso()
+            content_write = _is_content_write(tool_name, tool_input, tool_response)
 
     if not server_updates and not incr_reads and not incr_publishes:
         return None
@@ -570,6 +614,11 @@ def harvest(raw_text, payload):
         "session_vocab_rev": session_vocab_rev,
         "incr_reads": incr_reads,
         "incr_publishes": incr_publishes,
+        # The ledger checkpoint (apply_effect): `agent_id` rides along only to say WHO wrote --
+        # it is set for a subagent's call, i.e. the scribe, whose write covers less than the
+        # primary's.
+        "content_write": content_write,
+        "agent_id": payload.get("agent_id") if content_write else None,
     }
 
 
@@ -596,6 +645,20 @@ def _touch_session(state, sid):
         sessions[sid] = session
     state_mod.ensure_session_shape(session)
     return session
+
+
+def _checkpoint_content_write(session, agent_id):
+    """Move the session's ledger checkpoint for a content write that landed (ledger.py decides how
+    far: the primary's own write covers up to now, a subagent's only what its brief could have
+    held). Runs inside apply_effect's one locked write. The ledger is advice layered on top of this
+    harvest, so a fault in it is swallowed here instead of aborting the write -- which would cost
+    the vocab cache, the counters and the publish timestamps this same call also carries."""
+    try:
+        ledger_mod.apply_content_write(
+            session, ledger_mod.utcnow(), delegated=bool(agent_id), agent_id=agent_id
+        )
+    except Exception:
+        pass
 
 
 def apply_effect(effect):
@@ -638,6 +701,8 @@ def apply_effect(effect):
                 session["gitianReads"] = _as_counter(session.get("gitianReads")) + 1
             if effect["incr_publishes"]:
                 session["publishes"] = _as_counter(session.get("publishes")) + 1
+            if effect.get("content_write"):
+                _checkpoint_content_write(session, effect.get("agent_id"))
             session["updatedAt"] = state_mod.now_iso()
 
         state_mod.save(path, state_mod.finalize(state))
