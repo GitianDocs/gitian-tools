@@ -291,6 +291,9 @@ never move it). Quote those to confirm a write landed intact — never assert a 
   - `project_name_topic` — a `topics`/`mentions` slug just repeats `project` or the repo basename; it adds near-zero relatedness signal (every item in the project/repo would carry it) — link a concept topic instead
   - `undescribed_topics_minted` — the subset of this publish's `organic_topics_minted` slugs whose topic still has no description; describe them now while the context is fresh, all in ONE `publish_topic` call (`topics: [{slug, description}, ...]`)
   - `body_shrank` — the body you sent is more than 10% shorter than the stored one. Treat this as a truncation alarm, not a formality: compare `body_hash` in the response against what you expected, and if you didn't mean to cut the body, re-read the head revision and republish it in full. Past 25% (and more than 2000 characters) the publish is **rejected** outright with a `body_shrank` error instead — acknowledge a deliberate rewrite with `body_replaced: true`, or avoid the whole problem by using `patch_doc`/`patch_memory`, which never send a whole body at all
+- `entry_repo_kept` (`append_entry` only) — the entry kept the repo it is filed under; yours only
+  routed the call. The section landed: nothing to retry. Refiling is the primary's call (a
+  `publish_entry` with `base_rev`), never a reflex
 - A `retract_item` response carries `referrers` — every live item in that KB still linking to the
   retracted slug, each with its `source` — and, when there are any, a `dangling_referrers` warning
   naming up to ten. The tombstone has landed either way; the links have not moved. When the item
