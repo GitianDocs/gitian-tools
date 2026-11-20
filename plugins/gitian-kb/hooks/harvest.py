@@ -31,7 +31,6 @@ Tests: plugins/gitian-kb/hooks/tests/test_harvest.py (drives it via harvest.sh, 
 """
 
 import json
-import os
 import re
 import sys
 
@@ -42,6 +41,7 @@ import sys
 import kb_tool
 import ledger as ledger_mod
 import plugin_update
+import server_url
 import state as state_mod
 
 # Multi-KB phase 1 (see [[multi-kb-core-plan]]): sessions.<sid>.lastSeenVocabRev is keyed per
@@ -122,16 +122,6 @@ VOCAB_REV_RE = re.compile(r'"vocab_rev"\s*:\s*(\d+)')
 # defensive fallback per the spec, even though it isn't what the server emits today.
 MINT_WARNING_CODE = "organic_topics_minted"
 MINT_SLUG_TOKEN_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")  # same kebab shape as topicSlugIssue
-
-
-def _server_key():
-    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp/kb" -- mirrors the shell default-expansion
-    every other hook uses to key servers, so all hooks land on the same state key. It is the
-    plugin's own `.mcp.json` url (the canonical KB endpoint; bare `/api/mcp` is a deprecated alias)."""
-    base = os.environ.get("GITIAN_KB_URL")
-    if not base:
-        base = "https://gitian.dev"
-    return base + "/api/mcp/kb"
 
 
 def _parse_stdin():
@@ -608,7 +598,7 @@ def harvest(raw_text, payload):
         return None
 
     return {
-        "server_key": _server_key(),
+        "server_key": server_url.server_key(),
         "server_updates": server_updates,
         "session_id": sid,
         "session_vocab_rev": session_vocab_rev,
@@ -899,7 +889,7 @@ def mint_followup(raw_text, payload):
     if not slugs:
         return None
 
-    fresh = _apply_mint_followup(_server_key(), sid, slugs)
+    fresh = _apply_mint_followup(server_url.server_key(), sid, slugs)
     if not fresh:
         return None
     return _mint_message(fresh)

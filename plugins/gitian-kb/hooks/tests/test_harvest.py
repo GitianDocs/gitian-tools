@@ -156,6 +156,24 @@ class VocabRevCapture(HarvestTestCase):
         self.assertEqual(state["servers"][SERVER_KEY]["vocabRev"], 5)
         self.assertEqual(state["sessions"]["sess-1"]["lastSeenVocabRev"][SERVER_KEY]["home"], 5)
 
+    def test_captured_under_the_configured_server(self):
+        self.env["GITIAN_KB_URL"] = "https://kb.acme.test"
+        proc = self.run_harvest(
+            envelope(
+                "mcp__plugin_gitian-kb_gitian-kb__get",
+                tool_input={"slug": "x"},
+                tool_response={"isError": False, "vocab_rev": 5, "slug": "x"},
+            )
+        )
+        self.assert_silent(proc)
+
+        acme = "https://kb.acme.test/api/mcp/kb"
+        state = self.dump_state()
+        self.assertEqual(list(state["servers"]), [acme])
+        self.assertEqual(state["servers"][acme]["vocabRev"], 5)
+        self.assertEqual(list(state["sessions"]["sess-1"]["lastSeenVocabRev"]), [acme])
+        self.assertEqual(state["sessions"]["sess-1"]["lastSeenVocabRev"][acme]["home"], 5)
+
     def test_max_wins_on_regression(self):
         self.run_harvest(
             envelope(

@@ -47,13 +47,13 @@ Tests: plugins/gitian-kb/hooks/tests/test_publish_lint.py (drives it via publish
 """
 
 import json
-import os
 import sys
 
 # publish_lint.py always runs as a script file (never `python3 -c ...`), so Python has already put
 # its own directory at sys.path[0] -- `import state` below resolves state.py as a sibling module
 # without any path manipulation (see state.py's own docstring).
 import kb_tool
+import server_url
 import state as state_mod
 
 CONTEXT_PREFIX = "gitian-kb publish lint (advisory -- the call was not blocked):"
@@ -73,15 +73,6 @@ LINTED_BATCH_TOOLS = (
     "patch_memory",
 )
 BATCH_WRITE_MARKER = "batch_write"
-
-
-def _server_key():
-    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp/kb" -- mirrors the shell default-expansion every
-    other hook uses to key servers, so the vocab cache this reads matches what harvest.py wrote."""
-    base = os.environ.get("GITIAN_KB_URL")
-    if not base:
-        base = "https://gitian.dev"
-    return base + "/api/mcp/kb"
 
 
 def _parse_stdin():
@@ -227,7 +218,8 @@ def lint(payload):
         if flags.get(NEAR_MISS_FLAG):
             return None
 
-        cached_topics = _cached_topics(state, _server_key())
+        # The vocabulary harvest.py cached for this server (server_url.py names it for every hook).
+        cached_topics = _cached_topics(state, server_url.server_key())
         mentioned = _mentioned_slugs(tool_name, tool_input)
         return _check_near_miss(mentioned, cached_topics)
 

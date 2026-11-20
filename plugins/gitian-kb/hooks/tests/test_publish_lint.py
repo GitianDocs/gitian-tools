@@ -208,6 +208,21 @@ class NearMissRule(PublishLintTestCase):
         self.assertIn('"kb-disciplne" -- did you mean "kb-discipline"?', context)
         self.assertTrue(self.dump_state()["sessions"]["sess-1"]["flags"]["lint_near_miss"])
 
+    def test_fires_from_the_configured_servers_vocabulary(self):
+        # The hosted server's cached vocabulary is not this server's: alone, it leaves the lint silent.
+        self.env["GITIAN_KB_URL"] = "https://kb.acme.test"
+        self.seed_vocab(NEAR_MISS_VOCAB)
+        payload = envelope(
+            "mcp__plugin_gitian-kb_gitian-kb__publish_doc", tool_input={"topics": ["kb-disciplne"]}
+        )
+        self.assert_silent(self.run_lint(payload))
+
+        doc = {"servers": {"https://kb.acme.test/api/mcp/kb": {"topics": NEAR_MISS_VOCAB}}}
+        self.assertEqual(self.run_state("merge", input_text=json.dumps(doc)).returncode, 0)
+        context = self.assert_advised(self.run_lint(payload))
+        self.assertIn('"kb-disciplne" -- did you mean "kb-discipline"?', context)
+        self.assertTrue(self.dump_state()["sessions"]["sess-1"]["flags"]["lint_near_miss"])
+
     def test_checks_mentions_field_too(self):
         self.seed_vocab(NEAR_MISS_VOCAB)
         proc = self.run_lint(

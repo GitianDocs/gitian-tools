@@ -399,6 +399,33 @@ class ResumeProfile(SessionContextTestCase):
         self.assertIn("kb-librarian", context.split("KB vocabulary moved")[1])
         self.assertNotIn("re-read gitian-kb://vocab", context)
 
+    def test_moved_vocab_rev_on_the_configured_server_adds_the_delta_line_and_stamps_it(self):
+        # The hosted server's vocabulary moved too (2 -> 30); only the configured server's is named.
+        acme = "https://kb.acme.test/api/mcp/kb"
+        self.env["GITIAN_KB_URL"] = "https://kb.acme.test"
+        recent = _iso(datetime.now(timezone.utc) - timedelta(minutes=5))
+        self.seed_state(
+            servers={
+                acme: {"vocabRev": 9, "topics": [_topic("kb", "d", 1)]},
+                SERVER_KEY: {"vocabRev": 30, "topics": [_topic("kb", "d", 1)]},
+            },
+            sessions={
+                "sess-r2": _session_defaults(
+                    lastSeenVocabRev={acme: {"home": 5}, SERVER_KEY: {"home": 2}},
+                    updatedAt=recent,
+                )
+            },
+        )
+        context = self.context_of(
+            self.run_hook(self.envelope("resume", session_id="sess-r2")), "resume-moved-acme"
+        )
+        self.assertEqual(context.count("KB vocabulary moved"), 1)
+        self.assertIn("vocab_rev 5 -> 9", context)
+        self.assertIn("kb-librarian", context.split("KB vocabulary moved")[1])
+        last_seen = self.dump_state()["sessions"]["sess-r2"]["lastSeenVocabRev"]
+        self.assertEqual(last_seen[acme]["home"], 9)
+        self.assertEqual(last_seen[SERVER_KEY]["home"], 2)
+
     def test_stale_session_adds_staleness_line(self):
         stale = _iso(datetime.now(timezone.utc) - timedelta(hours=13))
         self.seed_state(

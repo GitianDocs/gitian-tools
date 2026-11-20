@@ -40,9 +40,8 @@ the vocab stamp goes through state.with_lock(), same read-modify-write shape as 
 mutating subcommands (see _record_seen_vocab_rev), and everything the ledger pass does -- watch,
 text, nudge mark, /clear reset -- is ONE ledger.mutate_session. The resume lines read the
 unlocked snapshot taken before either write, since every write refreshes the `updatedAt` the
-staleness line measures. `_server_key` mirrors harvest.py's helper of the same name (same env
-override, same default, same state key) rather than importing it -- harvest.py doesn't export it
-either; it's a small enough contract to duplicate.
+staleness line measures. The server's state key comes from server_url.py, the module every hook
+learns its server from, so this lands on the key harvest.py wrote.
 
 Output contract: a single already-JSON-escaped text fragment -- real newlines rendered as the
 literal two-character `\\n` escape sequence, matching session-context.sh's own convention of
@@ -63,7 +62,6 @@ end, which in turn shells out to this script).
 """
 
 import json
-import os
 import sys
 from datetime import datetime, timezone
 
@@ -72,6 +70,7 @@ from datetime import datetime, timezone
 # same as harvest.py does (see its own docstring for the same note).
 import ledger as ledger_mod
 import plugin_update
+import server_url
 import state as state_mod
 
 STALE_SESSION_HOURS = 12
@@ -82,15 +81,6 @@ LEDGER_SOURCES = ("resume", "compact", "clear")
 # token, so it can never resolve which kb (if any) a session is bound to; every read/write here
 # lands in "home" until a later task threads real kb targeting through the nudge layer.
 DEFAULT_KB_SLUG = "home"
-
-
-def _server_key():
-    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp/kb" -- mirrors harvest.py's _server_key so
-    every hook lands on the same state key."""
-    base = os.environ.get("GITIAN_KB_URL")
-    if not base:
-        base = "https://gitian.dev"
-    return base + "/api/mcp/kb"
 
 
 def _parse_iso(value):
@@ -267,7 +257,7 @@ def build(source, sid, pr_url=""):
     if source not in KNOWN_SOURCES:
         source = "startup"
 
-    server_key = _server_key()
+    server_key = server_url.server_key()
     state = state_mod.load()
     servers = state.get("servers")
     servers = servers if isinstance(servers, dict) else {}

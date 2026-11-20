@@ -69,7 +69,6 @@ Tests: plugins/gitian-kb/hooks/tests/test_routing_guard.py (drives it via routin
 """
 
 import json
-import os
 import re
 import subprocess
 import sys
@@ -107,26 +106,19 @@ def _parse_stdin():
     return payload if isinstance(payload, dict) else {}
 
 
-def _server_key():
-    """"${GITIAN_KB_URL:-https://gitian.dev}/api/mcp/kb" -- the key every hook files a server under
-    (harvest.py's own copy of the same three lines)."""
-    base = os.environ.get("GITIAN_KB_URL")
-    if not base:
-        base = "https://gitian.dev"
-    return base + "/api/mcp/kb"
-
-
 def _connection_default_chosen():
     """True only when the cached vocabulary read says this connection's default KB was CHOSEN by a
     human (`source` "connection") and is still writable (no `unavailable`). Any failure -- no state
-    module, no file, a malformed shape -- is False, which keeps the refusal. `state` is imported
+    module, no file, a malformed shape -- is False, which keeps the refusal. `state` and
+    `server_url` (which names the server the cache is filed under, for every hook) are imported
     here, inside the guard, because an ImportError at module level would escape the top-level
     fail-open handler below and exit non-zero."""
     try:
+        import server_url
         import state as state_mod
 
         servers = state_mod.load().get("servers")
-        server = servers.get(_server_key()) if isinstance(servers, dict) else None
+        server = servers.get(server_url.server_key()) if isinstance(servers, dict) else None
         default = server.get("defaultKb") if isinstance(server, dict) else None
         if not isinstance(default, dict):
             return False

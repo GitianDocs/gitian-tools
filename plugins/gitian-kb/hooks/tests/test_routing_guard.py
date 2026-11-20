@@ -314,6 +314,24 @@ class ConnectionDefaultStandsTheGuardDown(RoutingGuardTestCase):
         ):
             self.assert_allow(self.run_hook(envelope(tool_name=tool, cwd=self.repo_dir)))
 
+    def test_allows_it_on_a_configured_server_when_that_servers_default_was_chosen(self):
+        # The same case on another server: the guard reads the default cached under THAT server's
+        # key, and a chosen default cached for the hosted one does not stand in for it.
+        env = dict(self.env)
+        env["GITIAN_KB_URL"] = "https://kb.acme.test"
+        self.cache_default_kb({"kb": "support", "source": "connection"})
+        self.assert_deny(self.run_hook(envelope(cwd=self.repo_dir), env=env))
+        self.cache_default_kb(
+            {"kb": "support", "source": "connection"}, server_key="https://kb.acme.test/api/mcp/kb"
+        )
+        for tool in (
+            "mcp__plugin_gitian-kb_gitian-kb__publish_doc",
+            "mcp__plugin_gitian-kb_gitian-kb__publish_entry",
+            "mcp__plugin_gitian-kb_gitian-kb__append_entry",
+            "mcp__gitian-kb__append_entry",
+        ):
+            self.assert_allow(self.run_hook(envelope(tool_name=tool, cwd=self.repo_dir), env=env))
+
     def test_regression_a_home_default_still_refuses(self):
         # `home` is what the connection falls back to when nobody chose anything: that is the
         # silent fork the guard exists for.
