@@ -1,4 +1,4 @@
-# Targeting a KB (`kb`), linked KBs, org KBs, and `vocab_rev`
+# Targeting a KB (`kb`), linked KBs, org KBs, full addresses, and `vocab_rev`
 
 Which KB a call lands in, how a hit labels itself, and how to stay in sync when the vocabulary
 moves mid-session. Read this before a write into anything other than `home`, and whenever a
@@ -8,9 +8,10 @@ response carries a `kb` label you didn't pass in.
 
 Every tool takes an optional `kb` alongside its other arguments — you can belong to more than one
 KB (your `home` KB, any custom ones you're a member of, and any **org** KB you hold a seat for),
-and others can be linked to you read-only. Two forms are accepted: a bare slug for a KB of your
-own, or a qualified `login/kb-slug` — which addresses both a KB linked to you (see **Linked KBs**
-below) and an org KB, whose `login` is the org's (see **Org KBs** below). Most sessions never need
+and others can be linked to you read-only. Three forms are accepted: a bare slug for a KB of your
+own, a qualified `login/kb-slug` — which addresses both a KB linked to you (see **Linked KBs**
+below) and an org KB, whose `login` is the org's (see **Org KBs** below) — and a KB's full address
+`owner@server/kb-slug` (see **A KB by its full address** below). Most sessions never need
 to set it: a write with no `kb` lands in the **connection's default KB** — `home`, unless the
 human configured this connection with another (see **The connection's default KB** below) — and a
 bare slug on a single-target read (`get`/`history`) falls through to the rest of your KBs only if
@@ -194,6 +195,30 @@ invite to accept and nothing to revoke — and **write and read are separate gra
   for a targeting trick.
 - **The org's categories are its admin's.** Every member writes items and mints topics; only the
   org's admin adds or renames the `category` vocabulary. Pick from what `gitian-kb://vocab` lists.
+
+## A KB by its full address (`owner@server/kb-slug`)
+
+Every KB has a full address, `owner@server/kb-slug`, such as `acme@gitian.dev/team`. Naming this
+server, it means exactly what `owner/kb-slug` means, on reads and writes alike. One of your KBs can
+also **read another KB by its address**: a public one, or one whose admins accepted the request.
+That is set up by your KB's admin in its settings on the web, under "Sharing by address"; there is
+no MCP tool for adding one, answering a request or making a KB public. If a user asks, point them
+there rather than looking for a tool.
+
+- **Four reads reach it, when named.** `get`, `list`, `search` and `neighbors` with that address as
+  `kb` read a KB one of yours reads by address. Every other tool (`history`, `topic`, `changes`,
+  `file_intents`, `read_resource`) and **every write stays on this server**: you never publish into
+  such a KB, and an address naming another server anywhere else answers like an unknown KB.
+- **Sweeps.** A `search` with no `kb` also asks the KBs read by address that your KB's admin put in
+  every search; any other is read only when named. `list` and `neighbors` never sweep them.
+- **Hits carry the address as `kb`.** Pass it back verbatim. Such a hit has no `url`, and its
+  `author_login` is the author's full name there (`login@server`). A `list` of such a KB pages by its
+  own `next_cursor`; `pr`, `facets` and `facet_fields` are refused there as `validation_failed`.
+- **`unreachable_kbs`** names every KB read by address that did not answer this time (too slow, a
+  refusal, or it no longer lets yours read it). **The rest of the response stands**: report the gap
+  plainly, never read it as "nothing there", and do not retry in a loop. A `get` naming such a KB
+  answers `not_found` with `unreachable_kbs`, meaning the item could not be checked, not that it is
+  missing.
 
 ## Staying in sync mid-session (`vocab_rev`)
 
