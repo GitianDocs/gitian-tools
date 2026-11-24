@@ -77,6 +77,28 @@ goes to the default.
 - **A brief's `kb` still wins.** The scribe passes the brief's `kb` verbatim even when it equals the
   default — stating the target is what keeps a report about a landing honest.
 
+## Who you are here (`gitian-kb://whoami`)
+
+One read answers "which account is this connection, which KBs can I reach, and where will a
+kb-less write go": `gitian-kb://whoami` (through `read_resource` in a subagent; it ignores `kb`).
+Read it when a `kb` you were given answers `not_found`, when you must pick a KB for work nobody
+named one for, or before telling the human where something will land. It is JSON:
+
+- `login` (the GitHub login, `null` if none) and `account_id` — who the connection writes as.
+- `default_kb` — the same `{ kb, source }` `gitian-kb://vocab` leads with.
+- `kbs` — every KB you can read: `kb` is the exact label to pass as `kb` (copy it, never rebuild
+  it), `id` its permanent id, `kind` (`home`, `custom`, `org`), `access` (`member`, `linked`, or
+  `own-only` for an org KB you may write but read only your own items in) and `can_write`. A
+  `linked` KB is read-only to you; never aim a write at one with `can_write: false`.
+- `routes` — `{ owner, kb, kb_id }` per repo owner: a kb-less doc or journal entry whose `repo` is
+  that owner's lands in that `kb`. An owner not listed means a kb-less write about its repos lands
+  in your default KB. It lists only routes into KBs you can write; a KB or org missing from it is
+  simply not one you can reach — do not guess it exists, and do not report one you cannot see.
+
+It needs `kb:read`: a write-only token is refused (`forbidden`), so a scribe on one relies on the
+brief's `kb` and on each write's `landed_in`. Like the vocabulary, it is read fresh each time:
+re-read it rather than trusting one from before a membership or route changed.
+
 ## Linked KBs (`login/kb-slug`)
 
 Someone else's KB can be *linked* to one of yours — a **read-only**, **one hop**, **mutual**
