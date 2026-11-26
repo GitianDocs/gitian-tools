@@ -33,9 +33,10 @@ Three scenarios (this file IS the release gate):
   B. EveryNudgeFiresOnlyOnNewActivityAtItsCheckpoint
      A nudge fires only on activity it has not shown, and only at its checkpoint. Orientation, the
      near-miss lint and the mint follow-up still latch once per epoch, and a clear re-arms them. A
-     Stop blocks on a session's first work and never again for the same activity; a new merge
-     blocks only once 30 minutes have passed; work alone never blocks, it arrives as context on the
-     user's next prompt once two hours have; a scribe's note covers only what its brief held; a
+     session's first work reaches the user's next prompt and is never news again; a new merge
+     blocks only once 30 minutes have passed, and only once nothing the session opened is still in
+     flight; work alone never blocks, it arrives as context on the user's next prompt (at once the
+     first time, then once two hours have passed); a scribe's note covers only what its brief held; a
      standing rule gets one hint, then the 10-minute floor; SessionStart names the unwritten
      activity on resume and clear. No PreToolUse NUDGE ever decides a permission (the routing guard
      is a precondition, not a nudge: it denies by design).
@@ -61,6 +62,8 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from workdirs import make_work_dir  # a checkout outside scratch space: see workdirs.py
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent
 STATE_PY = HOOKS_DIR / "state.py"
@@ -336,7 +339,11 @@ class InvariantTestCase(unittest.TestCase):
         os.makedirs(self.bin_dir)
         self.gh_log = os.path.join(self.tmpdir, "gh.log")
         self.gh_response = os.path.join(self.tmpdir, "gh-response.json")
-        self.work = os.path.join(self.tmpdir, "work", "widgets")
+        # The checkout is made OUTSIDE scratch space (workdirs.py): a write under /tmp is not the
+        # user's work, and this suite is about work. The tempdir keeps everything nothing counts.
+        self.work_root = make_work_dir("gks-invariant-work-")
+        self.addCleanup(shutil.rmtree, self.work_root, True)
+        self.work = os.path.join(self.work_root, "widgets")
         self.real_git = shutil.which("git") or "git"
         self.calls = []  # (hook file name, CompletedProcess) for every hook the test ran
 
@@ -458,6 +465,11 @@ class InvariantTestCase(unittest.TestCase):
         return self.run_hook(
             ORIENTATION_SH, orientation_envelope(os.path.join(self.work, name), sid, self.work)
         )
+
+    def scratch_write(self, sid, name):
+        """The Write tool, about to create a temp file: the tempdir stands in for the scratchpad."""
+        path = os.path.join(self.tmpdir, "scratchpad", name)
+        return self.run_hook(ORIENTATION_SH, orientation_envelope(path, sid, self.work))
 
     def read(self, sid, agent_id=None):
         """A KB read (`search`): an orientation read, whoever made it."""
@@ -824,8 +836,10 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
 
     def test_the_brief_is_what_keeps_a_session_quiet(self):
         """The control for the two tests above: without it, silence could mean the hooks record
-        nothing. The same orientation, edits and commit, ending the same turn -- the only
-        difference is whether the scribe was briefed."""
+        nothing. The same orientation, edits and commit, the same turn end and the same next
+        message from the user -- the only difference is whether the scribe was briefed. Work is not
+        a completion point, so even the session that forgot is not blocked: it is told on that
+        next message, which costs no turn."""
         for briefed in (True, False):
             with self.subTest(briefed=briefed):
                 sid = "sess-briefed" if briefed else "sess-forgot"
@@ -836,11 +850,13 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
                 if briefed:
                     self.assert_silent(self.dispatch(sid, "kb-scribe", SCRIBE_ID))
                     self.assert_silent(self.stop(sid))
+                    self.assert_silent(self.prompt(sid, "carry on"))
                 else:
-                    reason = self.assert_block(self.stop(sid))
-                    self.assertIn(REPO, reason)
-                    self.assertIn("1 commit", reason)
-                    self.assertIn("3 file edits", reason)
+                    self.assert_silent(self.stop(sid))
+                    context = self.assert_prompt_context(self.prompt(sid, "carry on"))
+                    self.assertIn(REPO, context)
+                    self.assertIn("1 commit", context)
+                    self.assertIn("3 file edits", context)
 
     def test_a_foreground_scribe_is_covered_from_the_moment_its_dispatch_starts(self):
         """A scribe the agent waits for publishes while its dispatch is still running -- before the
@@ -993,11 +1009,35 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
         reason = self.assert_block(self.stop(sid))
         self.assertIn("#651", reason)
 
+    def test_a_session_that_only_writes_scratch_files_is_never_nudged(self):
+        """Temp files owe no KB write, so drafting them is not a session's first work -- whether the
+        Write tool made them or a command did, and however long the session then runs. The control:
+        the same three writes made in the checkout ARE the first work."""
+        sid = "sess-scratch"
+        self.assert_silent(self.read(sid))
+        for name in ("plan.md", "probe.py", "out.json"):
+            self.assert_silent(self.scratch_write(sid, name))
+        self.assert_silent(self.bash(sid, "echo x > %s" % os.path.join(self.tmpdir, "run.log")))
+        self.assert_silent(self.stop(sid))
+        self.assert_silent(self.prompt(sid, "carry on"))
+        self.pass_time(180)
+        self.assert_silent(self.prompt(sid, "and now?"))
+        self.assert_silent(self.stop(sid))
+        self.assertEqual(self.ledger(sid).get("edits", []), [])
+
+        control = "sess-scratch-control"
+        self.assert_silent(self.read(control))
+        for name in ("plan.md", "probe.py", "out.json"):
+            self.assert_silent(self.edit(control, name))
+        self.assert_silent(self.stop(control))
+        context = self.assert_prompt_context(self.prompt(control, "carry on"))
+        self.assertIn("3 file edits", context)
+
     def test_a_delegated_session_is_never_nudged_and_spends_nothing_of_the_primarys(self):
         """A subagent (`agent_id`) or a `claude --agent <name>` session (`agent_type`) has no tool
         to dispatch or brief a scribe with, so no checkpoint may speak to it -- not even with the
-        first work of its session waiting, which blocks the primary. And its silence is not the
-        primary's nudge spent: the primary's own turn end still blocks afterwards."""
+        first work of its session waiting, which the primary's next prompt carries. And its silence
+        is not the primary's nudge spent: the primary's own prompt is still told afterwards."""
         sid = "sess-delegated"
         self.assert_silent(self.read(sid))
         for name in ("loader.py", "loader_test.py", "README.md"):
@@ -1011,9 +1051,10 @@ class CompliantSessionEmitsZeroNudges(InvariantTestCase):
                 resume = self.context_of(self.session_start(sid, "resume", **who))
                 self.assertNotIn("no KB write covers", resume)
 
-        reason = self.assert_block(self.stop(sid))
-        self.assertIn("1 commit", reason)
-        self.assertNotIn("the user:", reason)  # the delegated session's "rule" was never recorded
+        self.assert_silent(self.stop(sid))
+        context = self.assert_prompt_context(self.prompt(sid, "carry on"))
+        self.assertIn("1 commit", context)
+        self.assertNotIn("the user:", context)  # the delegated session's "rule" was never recorded
 
 
 class EveryNudgeFiresOnlyOnNewActivityAtItsCheckpoint(InvariantTestCase):
@@ -1021,14 +1062,16 @@ class EveryNudgeFiresOnlyOnNewActivityAtItsCheckpoint(InvariantTestCase):
     checkpoint: the Stop block for completion points, the user's next prompt for everything else,
     SessionStart for a session that restarts. Time alone re-arms nothing."""
 
-    def first_work_block(self, sid):
-        """A session's first checkpoint with work nobody wrote down: orientation done, three edits
-        and a real commit, no brief. The Stop blocks -- the one block this layer is for."""
+    def first_work_nudge(self, sid):
+        """A session's first checkpoints with work nobody wrote down: orientation done, three edits
+        and a real commit, no brief. Work is not a completion point, so the turn end says nothing
+        (a block is a whole extra turn); the user's next message carries it instead."""
         self.assert_silent(self.read(sid))
         for name in ("loader.py", "loader_test.py", "README.md"):
             self.assert_silent(self.edit(sid, name))
         self.assert_silent(self.commit(sid, "Add the widget loader"))
-        return self.assert_block(self.stop(sid))
+        self.assert_silent(self.stop(sid))
+        return self.assert_prompt_context(self.prompt(sid, "carry on"))
 
     def test_orientation_lint_and_mint_latch_once_per_epoch_and_a_clear_re_arms_them(self):
         sid = "sess-latch"
@@ -1083,30 +1126,30 @@ class EveryNudgeFiresOnlyOnNewActivityAtItsCheckpoint(InvariantTestCase):
             "auth-flow", self.assert_post_tool_context(self.run_hook(HARVEST_SH, minted_payload))
         )
 
-    def test_the_stop_blocks_on_first_work_and_not_again_for_the_same_activity(self):
+    def test_first_work_reaches_the_next_prompt_and_is_not_news_again(self):
         sid = "sess-first-work"
-        reason = self.first_work_block(sid)
-        self.assertIn("gitian-kb checkpoint: activity since", reason)
-        self.assertIn(REPO, reason)
-        self.assertIn("1 commit", reason)
-        self.assertIn("3 file edits", reason)
-        self.assertIn("kb-scribe", reason)
+        context = self.first_work_nudge(sid)
+        self.assertIn("gitian-kb checkpoint: activity since", context)
+        self.assertIn(REPO, context)
+        self.assertIn("1 commit", context)
+        self.assertIn("3 file edits", context)
+        self.assertIn("kb-scribe", context)
 
         # The same activity is not news a second time: not at the next turn end, not on the user's
         # next prompt, not hours later.
         self.assert_silent(self.stop(sid))
-        self.assert_silent(self.prompt(sid, "carry on"))
+        self.assert_silent(self.prompt(sid, "and then?"))
         self.pass_time(300)
         self.assert_silent(self.stop(sid))
         self.assert_silent(self.prompt(sid, "still there?"))
 
     def test_a_new_merge_blocks_only_past_the_completion_floor(self):
         sid = "sess-merge-floor"
-        self.first_work_block(sid)
+        self.first_work_nudge(sid)
         self.assertEqual(self.gh_calls(), [])  # nothing watched yet: a turn end asks nobody
 
         # Auto-merge is ARMED by the command; the merge itself happens on GitHub, unseen, and only
-        # the Stop poll can find it. Five minutes after the last block it is news, but not yet
+        # the Stop poll can find it. Five minutes after the last nudge it is news, but not yet
         # worth a turn.
         self.pass_time(5)
         self.arm_merge(sid)
@@ -1117,16 +1160,58 @@ class EveryNudgeFiresOnlyOnNewActivityAtItsCheckpoint(InvariantTestCase):
         self.assertEqual(merges, ["#651"])  # learned, remembered, not yet shown
         self.assertEqual(self.session(sid)["watch"], [])
 
-        # Past the 30-minute floor (31 minutes after the block): once.
+        # Past the 30-minute floor (31 minutes after the nudge): once.
         self.pass_time(26)
         reason = self.assert_block(self.stop(sid))
         self.assertIn("#651", reason)
         self.assert_silent(self.stop(sid))
         self.assertEqual(self.gh_calls(), ["api graphql"])  # the merged entry is not asked about
 
+    def test_a_merge_waits_for_the_follow_up_the_session_still_has_open(self):
+        """A fix lands while its follow-up is already open: the middle of a chain, where a blocked
+        turn only ever bought "one write when this settles". The turn end waits for the last pull
+        request, then blocks ONCE for the chain -- and meanwhile the user's own prompt would have
+        carried the merge for nothing."""
+        sid = "sess-chain"
+        self.first_work_nudge(sid)
+        self.pass_time(31)
+        self.arm_merge(sid, 651)
+        self.open_pull_request(sid, 652)  # the fix's fix, opened before the fix lands
+        self.set_pull_request(651, "MERGED", stamp_ago(1), title="The fix")
+
+        self.assert_silent(self.stop(sid))  # past the floor, and still not a completion
+        self.assertEqual(self.gh_calls(), ["api graphql"])
+        merges = [e["ref"] for e in self.ledger(sid)["events"] if e["kind"] == "merge"]
+        self.assertEqual(merges, ["#651"])  # learned and remembered
+        self.assertEqual([w["number"] for w in self.session(sid)["watch"]], [652])
+
+        self.pass_time(10)
+        self.set_pull_request(652, "MERGED", stamp_ago(1), title="The fix's fix")
+        reason = self.assert_block(self.stop(sid))
+        self.assertIn("#651", reason)
+        self.assertIn("#652", reason)
+        self.assertEqual(self.session(sid)["watch"], [])
+        self.assert_silent(self.stop(sid))
+
+    def test_a_held_merge_still_rides_the_users_next_prompt(self):
+        sid = "sess-chain-prompt"
+        self.first_work_nudge(sid)
+        self.pass_time(31)
+        self.arm_merge(sid, 651)
+        self.open_pull_request(sid, 652)
+        self.set_pull_request(651, "MERGED", stamp_ago(1), title="The fix")
+        self.assert_silent(self.stop(sid))
+        context = self.assert_prompt_context(self.prompt(sid, "how is it going?"))
+        self.assertIn("#651", context)
+
+        # Told once: when the follow-up lands inside the floor, the turn end has nothing to add yet.
+        self.pass_time(10)
+        self.set_pull_request(652, "MERGED", stamp_ago(1), title="The fix's fix")
+        self.assert_silent(self.stop(sid))
+
     def test_work_alone_never_blocks_and_arrives_as_prompt_context_after_two_hours(self):
         sid = "sess-work-only"
-        self.first_work_block(sid)
+        self.first_work_nudge(sid)
 
         # An hour on, a new commit: the turn end stays silent (a block is a whole extra turn), and
         # so does the user's next prompt -- two hours have not passed since the last nudge.
@@ -1135,7 +1220,7 @@ class EveryNudgeFiresOnlyOnNewActivityAtItsCheckpoint(InvariantTestCase):
         self.assert_silent(self.stop(sid))
         self.assert_silent(self.prompt(sid, "what next?"))
 
-        # 121 minutes after the block a turn end is STILL silent -- work never costs a turn, however
+        # 121 minutes after the nudge a turn end is STILL silent -- work never costs a turn, however
         # late -- but the user's next message carries it: context, never a block, listing what is
         # still unwritten, the new commit included.
         self.pass_time(61)

@@ -2,8 +2,9 @@
 """Unit tests for bash_actions.py, the gitian-kb nudge layer's reader of Bash commands.
 
 bash_actions is pure (no subprocess, no filesystem, no state), so these call it directly: no hook
-wrapper, no state file. HOME and CLAUDE_CONFIG_DIR are the only environment it reads and every test
-pins them, so a developer's real ~/.claude never changes a verdict.
+wrapper, no state file. HOME, CLAUDE_CONFIG_DIR and TMPDIR are the only environment it reads (all
+three through ephemeral.py, the list of places where a write is not work) and every test pins
+them, so a developer's real ~/.claude or temp directory never changes a verdict.
 
 Most cases are here because a real command shape went wrong once or would have: a commit message
 passed as `-m "$(cat <<'EOF' ... EOF)"`, a PR body that says "run git commit", a comment with an
@@ -34,6 +35,7 @@ class ActionsTestCase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        os.environ.pop("TMPDIR", None)
 
     def parse(self, command, cwd=CWD):
         return bash_actions.parse(command, cwd)
@@ -873,6 +875,12 @@ class WriteSignatures(ActionsTestCase):
             "/dev/stdout",
             "/proc/self/oom_score_adj",
             "/tmp/../tmp/x.txt",
+            # macOS: /tmp and /var are links into /private, and a command is handed (or prints)
+            # the resolved spelling -- Claude Code's scratchpad, the per-user $TMPDIR.
+            "/private/tmp/claude-501/-Users-me-repo/abc/scratchpad/x.txt",
+            "/private/var/tmp/x.txt",
+            "/private/var/folders/zz/abc123/T/x.txt",
+            "/var/folders/zz/abc123/T/x.txt",
         ):
             with self.subTest(target=target):
                 self.assertEqual(self.parse("echo x > " + target), [])
@@ -885,6 +893,19 @@ class WriteSignatures(ActionsTestCase):
         self.assertEqual(self.written("echo x > /devices/x"), ["/devices/x"])
         # `..` is folded before the check, so it cannot smuggle a target out of scratch.
         self.assertEqual(self.written("echo x > /tmp/../repo/x"), ["/repo/x"])
+        # /private is only scratch where macOS keeps its temp directories.
+        self.assertEqual(self.written("echo x > /private/etc/x"), ["/private/etc/x"])
+        self.assertEqual(self.parse("cd /private/tmp/work && echo x > f"), [])
+
+    def test_tmpdir_names_scratch_space_too(self):
+        command = "echo x > /run/user/1000/scratch/x.txt"
+        self.assertEqual(self.written(command), ["/run/user/1000/scratch/x.txt"])
+        with mock.patch.dict(os.environ, {"TMPDIR": "/run/user/1000/scratch"}):
+            self.assertEqual(self.parse(command), [])
+            self.assertEqual(self.written("echo x > real.txt"), [CWD + "/real.txt"])
+        # A TMPDIR that would swallow real work (the home directory, or one above it) is ignored.
+        with mock.patch.dict(os.environ, {"TMPDIR": HOME}):
+            self.assertEqual(self.written("echo x > ~/repo/x"), [HOME + "/repo/x"])
 
     def test_claude_code_state_is_not_work_under_the_default_config_dir(self):
         for target in (

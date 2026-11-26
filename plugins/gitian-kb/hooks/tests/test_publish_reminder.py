@@ -310,18 +310,76 @@ class CheckpointDecision(PublishReminderTestCase):
     """Every branch of ledger.checkpoint_due as the Stop hook reaches it (never at a prompt): only
     a completion point blocks, because a block is a whole extra turn."""
 
-    def test_the_first_check_of_a_session_with_open_work_fires(self):
-        self.seed(session(events=[commit(5)]))
-        self.assert_block(self.run_hook(self.envelope()))
+    def test_a_sessions_first_work_never_blocks_and_writes_nothing(self):
+        # A commit or a few edits are not a completion point: they ride on the user's next prompt
+        # (prompt_checkpoint.py), and this turn end neither speaks nor touches the state.
+        for label, doc in (
+            ("a commit", session(events=[commit(5)])),
+            ("two edits", session(edit_buckets=[edits(5, 2)])),
+            ("three edits", session(edit_buckets=[edits(5, 3)])),
+            ("edits across repos", session(edit_buckets=[edits(9, 2, repo=API), edits(4, 1, repo=WEB)])),
+            ("commits and edits", session(events=[commit(5)], edit_buckets=[edits(4, 30)])),
+        ):
+            with self.subTest(label):
+                self.seed(doc)
+                before = self.state_bytes()
+                self.assert_silent(self.run_hook(self.envelope()))
+                self.assertEqual(self.state_bytes(), before)
 
-    def test_edits_fire_at_three_and_not_at_two(self):
-        self.seed(session(edit_buckets=[edits(5, 2)]))
+    def test_the_first_completion_of_a_session_blocks_and_lists_the_work_behind_it(self):
+        self.seed(session(events=[commit(9), merge(5)], edit_buckets=[edits(8, 3, repo=WEB)]))
+        reason = self.assert_block(self.run_hook(self.envelope()))["reason"]
+        self.assertIn("merged #650", reason)
+        self.assertIn("1 commit", reason)
+        self.assertIn("3 file edits", reason)
+
+    def test_a_merge_waits_while_a_pull_request_the_session_opened_is_still_open(self):
+        # #650 landed, its follow-up #651 has not: the middle of a chain is not a completion.
+        self.seed(
+            session(
+                events=[merge(1)],
+                nudged_ago=45,
+                watch=[watching(651, why="opened", polled_ago=1)],
+                poll_ago=1,
+            )
+        )
+        before = self.state_bytes()
         self.assert_silent(self.run_hook(self.envelope()))
-        self.seed(session(edit_buckets=[edits(5, 3)]))
+        self.assertEqual(self.state_bytes(), before)
+        self.assertEqual(self.gh_calls(), 0)  # polled a minute ago: nothing was asked either
+
+    def test_the_merge_that_ends_the_chain_blocks_for_all_of_it(self):
+        # The poll finds the follow-up merged too: nothing is in flight any more.
+        self.seed(
+            session(events=[merge(40)], nudged_ago=90, watch=[watching(651, why="opened")])
+        )
+        self.install_gh({"r0": {"p651": pull_request(651, "MERGED", "The follow-up")}})
+        reason = self.assert_block(self.run_hook(self.envelope()))["reason"]
+        self.assertIn("#650", reason)
+        self.assertIn('#651 "The follow-up"', reason)
+        self.assertEqual(self.session_state()["watch"], [])
+
+    def test_a_held_merge_blocks_once_it_has_waited_two_hours(self):
+        self.seed(
+            session(
+                events=[merge(121)],
+                nudged_ago=180,
+                watch=[watching(651, why="opened", polled_ago=1)],
+                poll_ago=1,
+            )
+        )
         self.assert_block(self.run_hook(self.envelope()))
 
-    def test_edits_in_different_buckets_and_repos_add_up(self):
-        self.seed(session(edit_buckets=[edits(9, 2, repo=API), edits(4, 1, repo=WEB)]))
+    def test_the_branchs_own_pull_request_holds_nothing(self):
+        # SessionStart watches the branch's open PR, which may be someone else's.
+        self.seed(
+            session(
+                events=[merge(1)],
+                nudged_ago=45,
+                watch=[watching(branch="feature/x", why="branch", polled_ago=1)],
+                poll_ago=1,
+            )
+        )
         self.assert_block(self.run_hook(self.envelope()))
 
     def test_a_non_draft_release_fires_and_a_draft_does_not(self):
@@ -418,7 +476,7 @@ class CheckpointDecision(PublishReminderTestCase):
 
 class BlockShape(PublishReminderTestCase):
     def test_the_block_is_one_json_line_with_a_decision_and_a_reason(self):
-        self.seed(session(events=[commit(5)]))
+        self.seed(session(events=[merge(5)]))
         proc = self.run_hook(self.envelope())
         self.assertEqual(proc.returncode, 0, msg="stderr=%r" % proc.stderr)
         self.assertTrue(proc.stdout.endswith("\n"))
@@ -452,12 +510,12 @@ class BlockShape(PublishReminderTestCase):
         self.assertIn("kb-scribe", reason)
 
     def test_the_reason_names_a_standing_rule_the_user_gave(self):
-        self.seed(session(events=[commit(5), ruling(4, "never merge with --auto on gitian")]))
+        self.seed(session(events=[merge(5), ruling(4, "never merge with --auto on gitian")]))
         reason = self.assert_block(self.run_hook(self.envelope()))["reason"]
         self.assertIn('- the user: "never merge with --auto on gitian"', reason)
 
     def test_the_nudge_is_stamped_and_a_second_stop_is_silent(self):
-        self.seed(session(events=[commit(5)]))
+        self.seed(session(events=[merge(5)]))
         self.assertNotIn("at", self.session_state()["nudges"])
         self.assert_block(self.run_hook(self.envelope()))
         self.assert_just_now(self.session_state()["nudges"]["at"])
@@ -468,13 +526,12 @@ class BlockShape(PublishReminderTestCase):
         self.assertEqual(self.state_bytes(), after_first)
 
     def test_a_new_completion_re_arms_after_the_floor_and_lists_the_old_work_too(self):
-        self.seed(session(events=[commit(5)]))
-        self.assert_block(self.run_hook(self.envelope()))
+        # A commit the user's prompt was told about 45 minutes ago: open, but nothing new.
+        self.seed(session(events=[commit(50)], nudged_ago=45))
+        self.assert_silent(self.run_hook(self.envelope()))
 
         def later(sess):
-            # Time passes: the first nudge was 45 minutes ago, and a merge has landed since.
-            sess["nudges"]["at"] = stamp(45)
-            sess["ledger"]["events"].append(merge(1))
+            sess["ledger"]["events"].append(merge(1))  # a merge has landed since
 
         self.edit_session(later)
         reason = self.assert_block(self.run_hook(self.envelope()))["reason"]
@@ -484,15 +541,15 @@ class BlockShape(PublishReminderTestCase):
 
     def test_the_transcript_path_is_remembered_for_a_later_clear(self):
         transcript = os.path.join(self.tmpdir, "t.jsonl")
-        self.seed(session(events=[commit(5)]))
+        self.seed(session(events=[merge(5)]))
         self.assert_block(self.run_hook(self.envelope(transcript_path=transcript)))
         self.assertEqual(self.session_state()["ledger"]["transcript"], transcript)
 
     def test_the_state_the_block_leaves_is_what_the_ledger_expects(self):
-        self.seed(session(events=[commit(5)]))
+        self.seed(session(events=[merge(5)]))
         self.assert_block(self.run_hook(self.envelope()))
         led = self.session_state()["ledger"]
-        self.assertEqual([e["kind"] for e in led["events"]], ["commit"])  # shown, not pruned
+        self.assertEqual([e["kind"] for e in led["events"]], ["merge"])  # shown, not pruned
         self.assertNotIn("checkpointAt", led)  # only a KB write moves the checkpoint
 
 
@@ -609,9 +666,10 @@ class PollingTheWatch(PublishReminderTestCase):
         self.assertEqual(self.gh_calls(), 1)
 
     def test_a_missing_gh_is_no_crash_and_still_stamps_the_poll(self):
-        self.seed(session(watch=[watching(650)], events=[commit(5)]))
+        self.seed(session(watch=[watching(650)], events=[release(5)]))
         env = dict(self.env, PATH=self.shim_dir_without_gh())
-        # The open commit is what blocks; the missing gh must not stop that from being said.
+        # The release is what blocks (a merge would wait for #650, still on the watch); the
+        # missing gh must not stop that from being said.
         self.assert_block(self.run_hook(self.envelope(), env=env))
         state = self.session_state()
         self.assertEqual(len(state["watch"]), 1)
@@ -685,7 +743,8 @@ class PollingTheWatch(PublishReminderTestCase):
         # snapshot and before the write: so both read the snapshot before either writes, both
         # decide to fire, and the second must find the first's nudge when it re-decides under the
         # lock.
-        self.seed(session(watch=[watching(650)], events=[commit(5)]))
+        # A release, because #650 stays open and a merge would wait for it.
+        self.seed(session(watch=[watching(650)], events=[release(5)]))
         self.install_gh(OPEN_650, barrier=True)
         payload = json.dumps(self.envelope())
         procs = [
@@ -782,7 +841,7 @@ class RetiredLatches(PublishReminderTestCase):
 
     def test_the_old_once_flag_and_publish_count_no_longer_silence_anything(self):
         self.seed(
-            session(events=[commit(5)], flags={"publish_reminder": True}, publishes=4)
+            session(events=[merge(5)], flags={"publish_reminder": True}, publishes=4)
         )
         self.assert_block(self.run_hook(self.envelope()))
 
@@ -803,15 +862,15 @@ class RetiredLatches(PublishReminderTestCase):
         self.assert_silent(self.run_hook(self.envelope(transcript_path=transcript)))
 
         # ... and a transcript that does not exist, or is not a path, costs the ledger nothing.
-        self.seed(session(events=[commit(5)]))
+        self.seed(session(events=[merge(5)]))
         self.assert_block(
             self.run_hook(self.envelope(transcript_path=os.path.join(self.tmpdir, "nope.jsonl")))
         )
-        self.seed(session(events=[commit(5)]))
+        self.seed(session(events=[merge(5)]))
         self.assert_block(self.run_hook(self.envelope(transcript_path=12345)))
 
     def test_an_epoch_bump_alone_re_arms_nothing(self):
-        self.seed(session(events=[commit(5)]))
+        self.seed(session(events=[merge(5)]))
         self.assert_block(self.run_hook(self.envelope()))
         proc = subprocess.run(
             [sys.executable, str(HOOKS_DIR / "state.py"), "bump-epoch", SID],
@@ -865,7 +924,7 @@ class Robustness(PublishReminderTestCase):
         self.assertEqual(self.gh_calls(), 0)
 
     def test_an_event_with_an_unreadable_timestamp_is_ignored_not_fatal(self):
-        self.seed(session(events=[{"at": "yesterday", "kind": "commit", "repo": API}, commit(5)]))
+        self.seed(session(events=[{"at": "yesterday", "kind": "commit", "repo": API}, merge(5)]))
         self.assert_block(self.run_hook(self.envelope()))
 
     def test_a_nudge_that_could_not_be_recorded_is_never_shown(self):

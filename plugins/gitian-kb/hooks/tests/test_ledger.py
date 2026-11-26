@@ -165,6 +165,7 @@ class Constants(unittest.TestCase):
         self.assertEqual(ledger.EDIT_THRESHOLD, 3)
         self.assertEqual(ledger.COMPLETION_FLOOR, timedelta(minutes=30))
         self.assertEqual(ledger.WORK_COOLDOWN, timedelta(hours=2))
+        self.assertEqual(ledger.CHAIN_HOLD, timedelta(hours=2))
         self.assertEqual(ledger.RULING_HINT_FLOOR, timedelta(minutes=10))
         self.assertEqual(ledger.BRIEF_GRACE, timedelta(minutes=30))
         self.assertEqual(ledger.SCRIBE_LAG, timedelta(minutes=10))
@@ -1167,25 +1168,34 @@ class CheckpointDue(unittest.TestCase):
             ]
         )
 
-    def test_the_first_check_of_a_session_fires_at_either_checkpoint(self):
+    def test_a_sessions_first_work_rides_the_next_prompt_and_only_a_completion_blocks(self):
+        # Work is not a completion point, so a session's first commit or edits cost no turn: the
+        # user's next prompt carries them. A merge or a published release still blocks at once.
+        prompt_only = (False, True)
         both = (True, True)
         self.table(
             [
-                ("one commit", session_with(events=[commit(-5)]), both),
-                ("a merge", session_with(events=[merge(-5)]), both),
-                ("a published release", session_with(events=[release(-5)]), both),
-                ("three edits in a bucket", session_with(edits=[bucket(-5, 3)]), both),
+                ("one commit", session_with(events=[commit(-5)]), prompt_only),
+                ("three edits in a bucket", session_with(edits=[bucket(-5, 3)]), prompt_only),
                 (
                     "three edits over three buckets",
                     session_with(edits=[bucket(-6, 1), bucket(-5, 1), bucket(-4, 1)]),
-                    both,
+                    prompt_only,
                 ),
-                ("a commit beside a standing rule", session_with(events=[commit(-5), ruling(-4)]), both),
+                (
+                    "a commit beside a standing rule",
+                    session_with(events=[commit(-5), ruling(-4)]),
+                    prompt_only,
+                ),
+                ("a merge", session_with(events=[merge(-5)]), both),
+                ("a published release", session_with(events=[release(-5)]), both),
+                ("a merge with the work behind it", session_with(events=[commit(-6), merge(-5)]), both),
             ]
         )
 
     def test_polling_and_rule_hints_are_not_nudges(self):
-        session = session_with(events=[commit(-5)])
+        # Were either stamp a quiet point, a merge five minutes old would wait out the floor.
+        session = session_with(events=[merge(-5)])
         session["nudges"] = {"pollAt": stamp(-1), "rulingAt": stamp(-1)}
         self.assertEqual(verdicts(session), (True, True))
 
@@ -1342,6 +1352,186 @@ class CheckpointDue(unittest.TestCase):
                 self.assertEqual(ledger.has_open_qualifying(session, NOW), want)
 
 
+class ChainHold(unittest.TestCase):
+    """A merge is a completion point only once nothing the session opened is still in flight: the
+    fix-forward loop (one PR merged, its follow-up already open) used to cost a blocked turn per
+    merge, and the agent's answer was "one write when the chain settles"."""
+
+    def table(self, cases):
+        for label, session, want in cases:
+            with self.subTest(label):
+                self.assertEqual(verdicts(session), want)
+                self.assertEqual(ledger.stop_decision(copy.deepcopy(session), NOW), want[0])
+
+    def test_a_merge_waits_at_a_turn_end_while_the_sessions_own_pull_request_is_open(self):
+        held = (False, True)  # no block; the user's next prompt still carries it, free
+        self.table(
+            [
+                (
+                    "the first merge of a session",
+                    session_with(events=[merge(-5)], watch=[watching(13)]),
+                    held,
+                ),
+                (
+                    "a merge long after the quiet point",
+                    session_with(events=[merge(-5)], checkpoint=-45, watch=[watching(13)]),
+                    held,
+                ),
+                (
+                    "an armed auto-merge still pending",
+                    session_with(events=[merge(-5)], nudged=-45, watch=[watching(13, why="armed")]),
+                    held,
+                ),
+                (
+                    "a merge the session started itself still pending",
+                    session_with(events=[merge(-5)], brief=-45, watch=[watching(13, why="merge")]),
+                    held,
+                ),
+            ]
+        )
+
+    def test_nothing_of_the_sessions_own_in_flight_means_no_hold(self):
+        fires = (True, True)
+        self.table(
+            [
+                ("nothing watched", session_with(events=[merge(-5)], checkpoint=-45), fires),
+                (
+                    "only the branch's pull request, which may be someone else's",
+                    session_with(events=[merge(-5)], checkpoint=-45, watch=[watching(13, why="branch")]),
+                    fires,
+                ),
+                (
+                    "a watch entry past its time to live",
+                    session_with(
+                        events=[merge(-5)],
+                        checkpoint=-45,
+                        watch=[watching(13, minutes=-(72 * 60 + 1))],
+                    ),
+                    fires,
+                ),
+                (
+                    "a malformed watch entry",
+                    session_with(events=[merge(-5)], checkpoint=-45, watch=[{"why": "opened"}]),
+                    fires,
+                ),
+            ]
+        )
+
+    def test_the_hold_never_shortens_the_completion_floor(self):
+        session = session_with(events=[merge(-5)], checkpoint=-20)
+        self.assertEqual(verdicts(session), (False, False))
+        session["watch"] = [watching(13)]
+        self.assertEqual(verdicts(session), (False, False))
+
+    def test_the_hold_ends_two_hours_after_the_oldest_unshown_merge_was_seen(self):
+        for ago, want in (
+            (60, (False, True)),
+            (119, (False, True)),
+            (120, (True, True)),  # at least CHAIN_HOLD
+            (300, (True, True)),
+        ):
+            with self.subTest(ago=ago):
+                session = session_with(
+                    events=[merge(-ago)], checkpoint=-(ago + 60), watch=[watching(13)]
+                )
+                self.assertEqual(verdicts(session), want)
+
+    def test_the_hold_counts_from_when_a_merge_was_seen_not_from_when_it_happened(self):
+        # Merged on GitHub over three hours ago, found by the poll ten minutes ago.
+        found_late = dict(merge(-200), seen=stamp(-10))
+        self.table(
+            [
+                (
+                    "seen ten minutes ago",
+                    session_with(events=[found_late], checkpoint=-210, watch=[watching(13)]),
+                    (False, True),
+                ),
+                (
+                    "no seen stamp: when it happened is all there is",
+                    session_with(events=[merge(-200)], checkpoint=-210, watch=[watching(13)]),
+                    (True, True),
+                ),
+            ]
+        )
+
+    def test_the_oldest_merge_not_yet_shown_decides(self):
+        open_pr = [watching(13)]
+        self.table(
+            [
+                (
+                    "an old unshown merge beside a fresh one",
+                    session_with(
+                        events=[merge(-130, "#11"), merge(-5, "#12")], checkpoint=-190, watch=open_pr
+                    ),
+                    (True, True),
+                ),
+                (
+                    "an old merge the last nudge showed, and a fresh one",
+                    session_with(
+                        events=[merge(-200, "#11"), merge(-5, "#12")], nudged=-180, watch=open_pr
+                    ),
+                    (False, True),
+                ),
+            ]
+        )
+
+    def test_a_published_release_is_never_held(self):
+        self.table(
+            [
+                (
+                    "a release beside a merge",
+                    session_with(
+                        events=[merge(-6), release(-5)], checkpoint=-45, watch=[watching(13)]
+                    ),
+                    (True, True),
+                ),
+                (
+                    "a release alone",
+                    session_with(events=[release(-5)], checkpoint=-45, watch=[watching(13)]),
+                    (True, True),
+                ),
+                (
+                    "a draft release changes nothing",
+                    session_with(
+                        events=[merge(-6), release(-5, draft=True)],
+                        checkpoint=-45,
+                        watch=[watching(13)],
+                    ),
+                    (False, True),
+                ),
+            ]
+        )
+
+    def test_a_fix_forward_chain_is_one_block_when_the_last_pull_request_lands(self):
+        s = {}
+        ledger.apply_content_write(s, at(0), False)  # everything before the chain is written
+        ledger.add_watch(s, at(1), R, number=20, why="opened")
+        ledger.add_watch(s, at(40), R, number=21, why="opened")  # the follow-up, before #20 lands
+        landed = {"acme/widgets#20": {"state": "MERGED", "number": 20, "title": "The fix"}}
+        ledger.apply_poll(s, at(45), landed, polled=ledger.due_watch(s, at(45)))
+        self.assertFalse(ledger.stop_decision(s, at(45)))  # #21 is still open: not a completion
+        self.assertFalse(ledger.stop_decision(s, at(70)))
+
+        fixed = {"acme/widgets#21": {"state": "MERGED", "number": 21, "title": "The fix's fix"}}
+        ledger.apply_poll(s, at(85), fixed, polled=ledger.due_watch(s, at(85)))
+        self.assertTrue(ledger.stop_decision(s, at(85)))
+        reason = ledger.stop_reason(s, at(85))
+        self.assertIn("#20", reason)
+        self.assertIn("#21", reason)
+
+    def test_a_closed_follow_up_releases_the_hold(self):
+        s = {}
+        ledger.apply_content_write(s, at(0), False)
+        ledger.add_watch(s, at(1), R, number=20, why="opened")
+        ledger.add_watch(s, at(40), R, number=21, why="opened")
+        landed = {"acme/widgets#20": {"state": "MERGED", "number": 20, "title": "The fix"}}
+        ledger.apply_poll(s, at(45), landed, polled=ledger.due_watch(s, at(45)))
+        self.assertFalse(ledger.stop_decision(s, at(45)))
+        closed = {"acme/widgets#21": {"state": "CLOSED", "number": 21, "title": "Not needed"}}
+        ledger.apply_poll(s, at(60), closed, polled=ledger.due_watch(s, at(60)))
+        self.assertTrue(ledger.stop_decision(s, at(60)))
+
+
 class RulingHint(unittest.TestCase):
     def test_a_session_never_hinted_is_due(self):
         self.assertTrue(ledger.ruling_hint_due({}, NOW))
@@ -1369,7 +1559,8 @@ class RulingHint(unittest.TestCase):
         self.assertTrue(ledger.ruling_hint_due(nudged, NOW))
         hinted = session_with(events=[commit(-5)])
         ledger.mark_ruling_hinted(hinted, NOW)
-        self.assertTrue(ledger.checkpoint_due(hinted, NOW))  # still the session's first check
+        # still the session's first check: a hint is not a quiet point the work must wait out
+        self.assertTrue(ledger.checkpoint_due(hinted, NOW, at_prompt=True))
 
 
 # --- text the agent reads --------------------------------------------------------------------------
@@ -1619,9 +1810,11 @@ class LongSession(unittest.TestCase):
             return t0 + timedelta(minutes=minutes)
 
         s = {}
-        # 17:05 the first commit: the first Stop of a session reminds once, then stays quiet.
+        # 17:05 the first commit: work is no completion point, so the turn end stays quiet and the
+        # user's next prompt carries it, once.
         ledger.record_event(s, m(5), "commit", repo=R, ref="a1a1a1a", text="First slice")
-        self.assertTrue(ledger.stop_decision(s, m(6)))
+        self.assertFalse(ledger.stop_decision(s, m(6)))
+        self.assertTrue(ledger.checkpoint_due(s, m(6), at_prompt=True))
         ledger.mark_nudged(s, m(6))
         self.assertFalse(ledger.stop_decision(s, m(7)))
         self.assertFalse(ledger.checkpoint_due(s, m(7), at_prompt=True))

@@ -11,10 +11,11 @@ transcript.
 Why the Stop hook is the place for completion points ONLY. A block is not a message, it is a whole
 extra turn: the model re-runs at the session's full context (often 300-500k tokens of cache reads)
 and the brief it then writes is a ~100k-token scribe run on top. So this hook spends that only where
-nothing cheaper exists -- the session's first work, and a merge or release (at most one per
-COMPLETION_FLOOR, so a burst of merges is one block). Commits, edits and standing rules ride along
-as a few lines of context on the user's next prompt (prompt_checkpoint.py) or at SessionStart, which
-cost no turn. `ledger.stop_decision` encodes that split and this module never second-guesses it.
+nothing cheaper exists -- a merge or release (at most one per COMPLETION_FLOOR, so a burst of merges
+is one block; and a merge only once no pull request the session opened is still open, so a fix and
+its follow-up are one block too). Commits, edits and standing rules -- a session's first work
+included -- ride along as a few lines of context on the user's next prompt (prompt_checkpoint.py) or
+at SessionStart, which cost no turn. `ledger.stop_decision` encodes that split and this module never second-guesses it.
 It also fires only at a CHECKPOINT, never right after an event: a compliant agent has briefed the
 scribe by the end of its turn, so its activity is already covered and the session sees nothing --
 the release gate in tests/test_invariant.py.

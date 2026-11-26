@@ -649,10 +649,10 @@ The pieces:
    brief), or by dispatching `kb-scribe` (a pending cover for 30 min that the publish confirms; a
    brief that never publishes stops covering). A nudge fires only when something new arrived
    since the last one, and lists all that is still uncovered, by repo. A Stop **block** costs a
-   whole extra turn, so it is reserved for a session's first work and for merges and releases (at
-   most every 30 min); other new work (commits, 3+ edits) waits for context on your next prompt,
-   2h after the last nudge, brief or write, and a standing rule gets one hint line on its own
-   prompt. Each asks for ONE batched brief (`SendMessage` a live scribe) with each line's repo: an
+   whole extra turn, so only a merge or release gets one (at most every 30 min, a merge once no
+   PR you opened is still open); other new work (commits, 3+ edits) is context on your next
+   prompt, the first time at once, then 2h after the last nudge, brief or write, and a standing
+   rule gets one hint line on its own prompt. Each asks for ONE batched brief (`SendMessage` a live scribe) with each line's repo: an
    org repo's docs and journal lines route to its team KB, memories stay in `home`. Nothing
    clears the bar? Carry on; it re-arms only on new activity. Silent in a delegated session and
    on a resumed `stop_hook_active` pass.

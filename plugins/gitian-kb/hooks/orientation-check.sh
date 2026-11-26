@@ -9,15 +9,18 @@
 # gitian read never sees this, from the very first mutation onward -- and a BACKGROUND librarian's
 # reads count, since harvest.py records a subagent's MCP traffic under the parent's session id.
 #
-# A write into Claude Code's EPHEMERAL state -- <config>/projects/ (agent memory, transcripts) and
-# <config>/plans/, where <config> is $CLAUDE_CONFIG_DIR or ~/.claude -- is exempt entirely: no
-# in-flight plan can claim such a path, so nudging it taught agents that the nudge is noise. It
-# neither fires the flag nor counts as an edit (the activity ledger counts edits, and a memory
-# write is not repo work either), so the first REAL mutation still gets the nudge. The list
-# is an allowlist on purpose: <config>/plugins, agents, skills and commands are AUTHORED source,
+# A write that is NOT the user's work is exempt entirely: scratch space (/tmp, $TMPDIR, the macOS
+# spellings under /private -- where Claude Code's own scratchpad lives) and Claude Code's EPHEMERAL
+# state -- <config>/projects/ (agent memory, transcripts) and <config>/plans/, where <config> is
+# $CLAUDE_CONFIG_DIR or ~/.claude. No in-flight plan can claim such a path, so nudging it taught
+# agents that the nudge is noise. It neither fires the flag nor counts as an edit (the activity
+# ledger counts edits, and three of them are enough for a checkpoint: a session that only drafted
+# temp files was being blocked at turn end over `/tmp (no GitHub remote): 3 file edits`), so the
+# first REAL mutation still gets the nudge. The list is ephemeral.py's, shared with the Bash hook,
+# and an allowlist on purpose: <config>/plugins, agents, skills and commands are AUTHORED source,
 # and a session whose whole task is editing a plugin there must still be nudged. A relative target
-# is resolved against the payload's cwd first; the match is lexical (no `..` resolution), which is
-# fine for an advisory nudge.
+# is resolved against the payload's cwd first; the match is lexical (`..` folded, symlinks not
+# followed), which is fine for an advisory nudge.
 #
 # It NEVER BLOCKS. The advice is PreToolUse `hookSpecificOutput.additionalContext` with no
 # `permissionDecision`, so the edit proceeds through the normal permission flow and the advice
@@ -86,7 +89,7 @@ except Exception:
     pass
 ' 2>/dev/null)"
 
-# --- exempt: the target is Claude Code's own ephemeral state (memory, transcripts, plans) ------
+# --- exempt: the target is not the user's work (scratch space, Claude Code's own state) -------
 target="$(printf '%s' "$hook_input" | python3 -c '
 import json, sys
 try:
@@ -106,14 +109,9 @@ if [ -n "$target" ]; then
     /*) ;;
     *) target="${cwd%/}/${target}" ;;
   esac
-  config_dir="${CLAUDE_CONFIG_DIR:-${HOME:-}/.claude}"
-  case "$config_dir" in
-    /*)
-      case "$target" in
-        "${config_dir%/}"/projects/* | "${config_dir%/}"/plans/*) exit 0 ;;
-      esac
-      ;;
-  esac
+  # ephemeral.py is the one list (the Bash hook reads the same one): it says "yes" or nothing, and
+  # nothing -- python3 missing included -- means the write is counted like any other.
+  [ "$(gks_is_ephemeral "$target")" = "yes" ] && exit 0
 fi
 
 reads="$(gks_get "sessions.$sid.gitianReads")"

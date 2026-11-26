@@ -18,6 +18,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from workdirs import make_work_dir  # a checkout outside scratch space: see workdirs.py
+
 HOOKS_DIR = Path(__file__).resolve().parent.parent
 ORIENTATION_SH = HOOKS_DIR / "orientation-check.sh"
 STATE_PY = HOOKS_DIR / "state.py"
@@ -190,7 +192,8 @@ class EditsLandInTheLedger(OrientationTestCase):
         self.merge({"sessions": {"sess-1": {"gitianReads": 3}}})
 
     def checkout(self, remote="git@github.com:acme/widgets.git"):
-        directory = tempfile.mkdtemp(prefix="gks-orientation-ledger-")
+        # Outside scratch space: an edit under /tmp is not work (ScratchSpaceIsExempt below).
+        directory = make_work_dir("gks-orientation-ledger-")
         self.addCleanup(shutil.rmtree, directory, True)
         subprocess.run(["git", "init", "-q", directory], check=True)
         if remote:
@@ -292,11 +295,16 @@ class ClaudeEphemeralStateIsExempt(OrientationTestCase):
     """A write into Claude Code's ephemeral state (<config>/projects -- agent memory, transcripts
     -- and <config>/plans) is a path no in-flight plan can claim: silent, flag NOT spent, NOT
     counted as an edit -- so the first real mutation afterwards still gets the nudge. AUTHORED
-    source under the same config dir (plugins, agents, skills, commands) is NOT exempt."""
+    source under the same config dir (plugins, agents, skills, commands) is NOT exempt. Scratch
+    space is the other half of the same list: ScratchSpaceIsExempt below."""
 
     def setUp(self):
         super().setUp()
-        self.home = os.path.join(self.tmpdir, "home")
+        # The fake home sits outside scratch space, so that what makes a path exempt here is the
+        # config directory it is under and never the tempdir it happens to be in.
+        self.work = make_work_dir("gks-orientation-home-")
+        self.addCleanup(shutil.rmtree, self.work, True)
+        self.home = os.path.join(self.work, "home")
         self.config = os.path.join(self.home, ".claude")
         self.env["HOME"] = self.home
         self.env.pop("CLAUDE_CONFIG_DIR", None)
@@ -342,8 +350,8 @@ class ClaudeEphemeralStateIsExempt(OrientationTestCase):
                 self.assert_advised(proc)
 
     def test_claude_config_dir_override_is_honored(self):
-        self.env["CLAUDE_CONFIG_DIR"] = os.path.join(self.tmpdir, "cfg")
-        inside = os.path.join(self.tmpdir, "cfg", "plans", "x.md")
+        self.env["CLAUDE_CONFIG_DIR"] = os.path.join(self.work, "cfg")
+        inside = os.path.join(self.work, "cfg", "plans", "x.md")
         self.assert_silent(self.run_hook(envelope(tool_input={"file_path": inside})))
         # ...and the default location is then an ordinary path.
         self.assert_advised(
@@ -353,6 +361,65 @@ class ClaudeEphemeralStateIsExempt(OrientationTestCase):
     def test_a_sibling_directory_sharing_the_prefix_is_not_exempt(self):
         lookalike = os.path.join(self.home, ".claude-backup", "projects", "a.md")
         self.assert_advised(self.run_hook(envelope(tool_input={"file_path": lookalike})))
+
+
+class ScratchSpaceIsExempt(OrientationTestCase):
+    """A write into scratch space is not the user's work: silent, flag NOT spent, NOT counted as an
+    edit. Three counted edits are enough for a turn-end checkpoint, so a session that only drafted
+    temp files used to be blocked over `/tmp (no GitHub remote): 3 file edits` -- and on macOS,
+    where every tool is handed the resolved `/private/...` spelling, the Bash hook's own scratch
+    list missed it too. The list is ephemeral.py's, the one the Bash hook reads."""
+
+    SCRATCH = (
+        "/tmp/claude-1000/-home-me-repo/abc/scratchpad/notes.md",
+        "/var/tmp/draft.md",
+        "/private/tmp/claude-501/-Users-me-repo/abc/scratchpad/notes.md",
+        "/private/var/folders/zz/abc123/T/draft.md",
+        "/var/folders/zz/abc123/T/draft.md",
+    )
+
+    def session(self, sid="sess-1"):
+        return self.dump_state().get("sessions", {}).get(sid, {})
+
+    def assert_untouched(self, sid="sess-1"):
+        session = self.session(sid)
+        self.assertEqual(session.get("edits", 0), 0)
+        self.assertEqual(session.get("ledger", {}).get("edits", []), [])
+        self.assertNotEqual(session.get("flags", {}).get("orientation"), True)
+
+    def test_a_scratch_write_is_silent_uncounted_and_leaves_the_nudge_for_real_work(self):
+        for path in self.SCRATCH:
+            with self.subTest(path=path):
+                proc = self.run_hook(envelope(tool_name="Write", tool_input={"file_path": path}))
+                self.assert_silent(proc)
+                self.assert_untouched()
+        # The first REAL mutation afterwards still gets the advice, and is the only edit on record.
+        self.assert_advised(self.run_hook(envelope(tool_input={"file_path": "/repo/src/a.ts"})))
+        self.assertEqual(sum(b["n"] for b in self.session()["ledger"]["edits"]), 1)
+
+    def test_a_notebook_and_a_relative_target_in_scratch_space_are_exempt_too(self):
+        notebook = {"notebook_path": "/tmp/analysis.ipynb"}
+        self.assert_silent(self.run_hook(envelope(tool_name="NotebookEdit", tool_input=notebook)))
+        relative = envelope(tool_input={"file_path": "out/draft.md"}, cwd="/private/tmp/work")
+        self.assert_silent(self.run_hook(relative))
+        self.assert_untouched()
+
+    def test_tmpdir_names_scratch_space_too(self):
+        self.env["TMPDIR"] = "/run/user/1000/scratch"
+        inside = envelope(tool_input={"file_path": "/run/user/1000/scratch/draft.md"})
+        self.assert_silent(self.run_hook(inside))
+        self.assert_untouched()
+        # Without it the same path is an ordinary one.
+        del self.env["TMPDIR"]
+        self.assert_advised(self.run_hook(inside))
+
+    def test_a_path_that_only_looks_like_scratch_space_is_counted(self):
+        for index, path in enumerate(("/tmpfile/a.ts", "/private/etc/a.conf", "/var/lib/app/a.ts")):
+            with self.subTest(path=path):
+                sid = "lookalike-%d" % index  # the advice fires once per session
+                proc = self.run_hook(envelope(tool_input={"file_path": path}, session_id=sid))
+                self.assert_advised(proc)
+                self.assertEqual(self.session(sid)["edits"], 1)
 
 
 class NonZeroReadsAlwaysSilent(OrientationTestCase):

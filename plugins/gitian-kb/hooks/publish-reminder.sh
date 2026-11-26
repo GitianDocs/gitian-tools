@@ -1,9 +1,10 @@
 #!/bin/sh
 # publish-reminder.sh -- Stop hook for the gitian-kb plugin: the completion checkpoint. At a turn
 # end it polls the session's watched pull requests for a merge (pr_poll.py) and blocks, once, with
-# a list of the activity no KB write covers yet -- but only at a completion point (the session's
-# first work, a merge, a release; ledger.py decides), because a block costs a whole extra turn.
-# Everything else waits for the next prompt's context line (prompt-checkpoint.sh).
+# a list of the activity no KB write covers yet -- but only at a completion point (a merge or a
+# release, and a merge only once nothing the session opened is still in flight; ledger.py decides),
+# because a block costs a whole extra turn. Everything else, a session's first work included, waits
+# for the next prompt's context line (prompt-checkpoint.sh).
 #
 # All JSON/state handling happens in one python3 invocation; this script never reads stdin
 # itself -- it runs publish_reminder.py as a child process (not `exec`, so this script's own

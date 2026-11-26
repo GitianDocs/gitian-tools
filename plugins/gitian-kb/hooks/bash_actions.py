@@ -51,6 +51,10 @@ import posixpath
 import re
 from urllib.parse import unquote
 
+# bash_actions.py is only ever imported by a sibling hook script (or by its tests, which put this
+# directory on sys.path), so the sibling module resolves directly. It is as pure as this one.
+import ephemeral
+
 # A command longer than this is a pasted file, not a command worth lexing inside a hook's budget.
 MAX_COMMAND_CHARS = 1000000
 # Subshells and substitutions nested deeper than this are not a real command: parse gives up.
@@ -779,26 +783,10 @@ def _change_dir(name, args, cur, pushed):
     return _resolve_dir(cur, target)
 
 
-def _ephemeral_roots():
-    """Where a write is NOT the user's work: scratch space, device files, and Claude Code's own
-    state -- `<config>/projects/` (memory, transcripts) and `<config>/plans/`, `<config>` being
-    $CLAUDE_CONFIG_DIR or ~/.claude. The same allowlist orientation-check.sh exempts, on purpose:
-    <config>/skills, agents and plugins are authored source and stay counted."""
-    roots = ["/tmp", "/var/tmp", "/dev", "/proc"]
-    config = os.environ.get("CLAUDE_CONFIG_DIR") or (os.environ.get("HOME") or "") + "/.claude"
-    if config.startswith("/"):
-        config = config.rstrip("/")
-        roots.extend((config + "/projects", config + "/plans"))
-    return roots
-
-
-def _under(path, root):
-    return path == root or path.startswith(root + "/")
-
-
 def _write_action(cur, raw_paths):
     """The `write` action for these targets, or None when none survives: unresolvable paths and
-    anything under _ephemeral_roots are dropped, repeats are folded."""
+    anything that is not the user's work (ephemeral.py: scratch space, device files, Claude Code's
+    own projects/ and plans/) are dropped, repeats are folded."""
     kept = []
     seen = set()
     roots = None
@@ -808,8 +796,8 @@ def _write_action(cur, raw_paths):
             continue
         seen.add(path)
         if roots is None:
-            roots = _ephemeral_roots()
-        if any(_under(path, root) for root in roots):
+            roots = ephemeral.roots()
+        if any(ephemeral.under(path, root) for root in roots):
             continue
         kept.append(path)
     return {"kind": "write", "dir": cur, "paths": kept} if kept else None

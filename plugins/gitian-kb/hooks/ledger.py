@@ -22,10 +22,11 @@ Nudges are evaluated ONLY at checkpoints, never right after the event: a complia
 the scribe within the turn, so by the next checkpoint its activity is covered and the session stays
 silent -- the release gate in tests/test_invariant.py. Checkpoints are priced by what they cost the
 agent: a Stop block re-runs a whole turn at the session's full context, so it is reserved for
-completion points (the session's first work, and merges / releases at most every
-COMPLETION_FLOOR, which collapses a burst into one block); everything else rides along as a few
-lines of context on the user's next prompt (`checkpoint_due(..., at_prompt=True)`) or at
-SessionStart, costing no turn at all.
+completion points -- a merge or a release, at most every COMPLETION_FLOOR (which collapses a burst
+into one block), and a merge only once nothing the session opened is still in flight (CHAIN_HOLD:
+a fix that needs a follow-up is one completion, not two). Everything else, a session's first work
+included, rides along as a few lines of context on the user's next prompt
+(`checkpoint_due(..., at_prompt=True)`) or at SessionStart, costing no turn at all.
 
 Everything here is a pure function over a session dict and an aware UTC `now`, except the repo
 helpers (a `.git` walk-up plus `git` subprocesses with a 2 s timeout) and `mutate_session`, the one
@@ -53,6 +54,7 @@ import state as state_mod
 EDIT_THRESHOLD = 3
 COMPLETION_FLOOR = timedelta(minutes=30)
 WORK_COOLDOWN = timedelta(hours=2)
+CHAIN_HOLD = timedelta(hours=2)
 RULING_HINT_FLOOR = timedelta(minutes=10)
 BRIEF_GRACE = timedelta(minutes=30)
 SCRIBE_LAG = timedelta(minutes=10)
@@ -549,18 +551,49 @@ def has_open_qualifying(session, now):
     return any(_qualifies(e) for e in events) or _edit_total(edits) >= EDIT_THRESHOLD
 
 
+def _chain_open(session, now):
+    """Whether a pull request of the session's OWN is still in flight: one it opened, armed or
+    set merging and the poll has not yet seen merged or closed. The branch's pull request that
+    SessionStart watches does not count (it may be someone else's), nor does an entry past its
+    WATCH_TTL (the poll would drop it)."""
+    return any(
+        entry.get("why") != "branch" and now - parse_iso(entry["addedAt"]) < WATCH_TTL
+        for entry in watch_of(session)
+    )
+
+
+def _chain_held(session, now, new_events):
+    """Whether a turn end should wait with these new completions. A merge while the session still
+    has a pull request of its own open is the middle of a chain, not the end of one (a fix and its
+    follow-up, change 1 of 3): blocking there bought a turn whose answer was "one write when the
+    chain settles". So the block waits for the last one to land or close -- at most CHAIN_HOLD from
+    when the oldest merge not yet shown was SEEN, so a pull request left open for review cannot
+    bury a merge. A published release is the end of a chain by definition and is never held."""
+    if any(e.get("kind") == "release" and _is_completion(e) for e in new_events):
+        return False
+    if not _chain_open(session, now):
+        return False
+    seen = [
+        parse_iso(e.get("seen")) or parse_iso(e["at"])
+        for e in new_events
+        if e.get("kind") == "merge"
+    ]
+    return bool(seen) and now - min(seen) < CHAIN_HOLD
+
+
 def checkpoint_due(session, now, at_prompt=False):
     """Whether this checkpoint should show the ledger. Always requires open qualifying activity
     and something NEW since the last nudge. Then, measured from the quiet point (the latest nudge,
-    brief or covering write):
-      - none yet (a session that never wrote, briefed or was nudged): fire -- the original
-        first-work reminder (pinned decision 4), at any checkpoint;
-      - a new merge or non-draft release: fire once COMPLETION_FLOOR has passed (a burst of merges
-        becomes one nudge, and a scribe just briefed gets time to land);
-      - at a prompt only, a new commit, merge or release, or EDIT_THRESHOLD new edits, once
-        WORK_COOLDOWN has passed: work is not worth a forced turn, so it waits for a context line
-        on the user's next message, or rides along in the next completion block. Info-only items
-        (an opened PR, a draft release, a standing rule) never re-arm anything."""
+    brief or covering write; none yet for a session that never wrote, briefed or was nudged):
+      - at a turn end (a block, which costs a whole turn): only a new merge or non-draft release,
+        once COMPLETION_FLOOR has passed since the quiet point (a burst of merges becomes one
+        nudge, and a scribe just briefed gets time to land), and not while the chain it belongs
+        to is still open (_chain_held);
+      - at a prompt (context, which costs nothing): the same completions after the same floor,
+        never held; a session's first work at once; and after that a new commit or
+        EDIT_THRESHOLD new edits once WORK_COOLDOWN has passed. Work is not worth a forced turn,
+        so it waits for the user's next message, or rides along in the next completion block.
+    Info-only items (an opened PR, a draft release, a standing rule) never re-arm anything."""
     if not has_open_qualifying(session, now):
         return False
     nudged = parse_iso(nudges_of(session).get("at"))
@@ -575,11 +608,12 @@ def checkpoint_due(session, now, at_prompt=False):
         return False
     led = ledger_of(session)
     quiet = _latest(nudged, parse_iso(led.get("checkpointAt")), parse_iso(led.get("briefAt")))
-    if quiet is None:
-        return True
-    if new_completion and now - quiet >= COMPLETION_FLOOR:
-        return True
-    return at_prompt and now - quiet >= WORK_COOLDOWN
+    floored = quiet is None or now - quiet >= COMPLETION_FLOOR
+    if at_prompt:
+        if quiet is None or (new_completion and floored):
+            return True
+        return now - quiet >= WORK_COOLDOWN
+    return new_completion and floored and not _chain_held(session, now, new_events)
 
 
 def stop_decision(session, now):

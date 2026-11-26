@@ -11,9 +11,9 @@
 # hooks.json, e.g. `sh "${CLAUDE_PLUGIN_ROOT}/hooks/foo.sh"`); it is not safe to source this from
 # a script living elsewhere. Never rely on CLAUDE_PLUGIN_ROOT here (see hook idiom notes).
 #
-# Sourcing this file has no side effects beyond defining _gks_state_py/_gks_ledger_py/functions
-# below -- it touches no state, prints nothing, and runs no state.py or ledger.py subcommand until a
-# wrapper is called.
+# Sourcing this file has no side effects beyond defining _gks_state_py/_gks_ledger_py/
+# _gks_ephemeral_py and the functions below -- it touches no state, prints nothing, and runs no
+# state.py, ledger.py or ephemeral.py command until a wrapper is called.
 #
 # Every wrapper is fail-open: state.py and ledger.py themselves never exit non-zero or print on
 # error, and each wrapper additionally guards missing args / a missing script so a caller can invoke
@@ -29,6 +29,10 @@ fi
 _gks_ledger_py=""
 if [ -n "$_gks_lib_dir" ] && [ -f "$_gks_lib_dir/ledger.py" ]; then
   _gks_ledger_py="$_gks_lib_dir/ledger.py"
+fi
+_gks_ephemeral_py=""
+if [ -n "$_gks_lib_dir" ] && [ -f "$_gks_lib_dir/ephemeral.py" ]; then
+  _gks_ephemeral_py="$_gks_lib_dir/ephemeral.py"
 fi
 
 # gks_state_file -- print the resolved state file path (mirrors state.py's own resolution).
@@ -78,6 +82,17 @@ gks_record_edit() {
   _gks_path="${2:-}"
   [ -n "$_gks_sid" ] && [ -n "$_gks_ledger_py" ] || return 0
   python3 "$_gks_ledger_py" edit "$_gks_sid" "$_gks_path" 2>/dev/null
+  return 0
+}
+
+# gks_is_ephemeral PATH -- print "yes" when PATH (absolute) is somewhere a write is not the user's
+# work: scratch space, or Claude Code's own projects/ and plans/ (ephemeral.py, the ONE list, shared
+# with the Bash hook). Prints nothing otherwise and on any error, so a caller that cannot ask keeps
+# counting.
+gks_is_ephemeral() {
+  _gks_path="${1:-}"
+  [ -n "$_gks_path" ] && [ -n "$_gks_ephemeral_py" ] || return 0
+  python3 "$_gks_ephemeral_py" "$_gks_path" 2>/dev/null
   return 0
 }
 

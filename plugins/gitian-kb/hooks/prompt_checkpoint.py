@@ -15,8 +15,8 @@ Exactly three steps, in ONE locked write of the state file:
      a memory into the kb-scribe brief it is already writing. A ruling never blocks and never
      qualifies a checkpoint by itself: a false positive of a text heuristic must stay cheap.
   2. ledger.checkpoint_due(at_prompt=True): open qualifying activity that is new since the last
-     nudge, once the quiet point is WORK_COOLDOWN old (or a completion, or the session's first
-     work). Add ledger.prompt_text -- what is unwritten, and the ask for ONE batched brief -- and
+     nudge, once the quiet point is WORK_COOLDOWN old (or a completion; and at once for the
+     session's first work, which no turn end ever blocks for). Add ledger.prompt_text -- what is unwritten, and the ask for ONE batched brief -- and
      mark the ledger nudged so the same activity is not listed again.
   3. Print one JSON object, or nothing at all. When step 2 fires, its list already carries the
      rule as a `- the user:` line, so step 1's hint is left out (said once, paid for once). A compliant
